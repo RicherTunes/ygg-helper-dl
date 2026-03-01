@@ -10,6 +10,21 @@ Written in vanilla JavaScript with no dependencies.
 
 **Language**: All UI text, comments, and documentation are in **French**.
 
+## File Reference
+
+| File | Purpose |
+|------|---------|
+| `manifest.json` | Extension manifest (permissions, content scripts, 24 YggTorrent TLDs) |
+| `background.js` | Service worker — Pipeline orchestrator (~500 lines) |
+| `content.js` | Content script — Thin sensor + token service (~200 lines) |
+| `content.css` | In-page overlay widget styles |
+| `popup.html` | Popup dashboard HTML |
+| `popup.js` | Popup dashboard logic |
+| `popup.css` | Popup dashboard styles |
+| `build.ps1` | PowerShell script to build `.crx` |
+| `icons/` | Extension icons (16, 48, 128, 300x188) |
+| `images/` | Documentation screenshots for README |
+
 ## Development
 
 Load the extension directly in the browser (no build step needed):
@@ -112,3 +127,19 @@ The manifest includes 24 known YggTorrent TLDs. When the site changes domain:
 - Message actions are `UPPER_SNAKE_CASE`
 - Alarm names use `ygg_` prefix: `ygg_process_queue`, `ygg_countdown_${id}`, `ygg_update_check`, `ygg_cleanup`
 - Code uses camelCase for functions/variables, `UPPER_SNAKE_CASE` for constants
+- Indentation: 4-space style in JavaScript files
+
+## Testing
+
+No automated tests. Manual testing only:
+1. Load unpacked extension in browser
+2. Visit a YggTorrent torrent page
+3. Verify automatic enqueue and countdown
+4. Check popup renders pipeline correctly (active vs pending timers)
+5. If touching domain logic, test custom-domain registration
+
+## Commit Guidelines
+
+- Commit messages are short and pragmatic: `v1.4: Fix Brave compatibility`, `Update README.md`
+- Do not commit distribution artifacts (`*.crx`, `*.zip`, `*key*.pem` are in `.gitignore`)
+- For UI changes, include screenshots in PRs
