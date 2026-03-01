@@ -9,14 +9,29 @@ const fs = require('fs');
 
 const OUTPUT_DIR = path.resolve(__dirname, 'output');
 const IMAGES_DIR = path.resolve(__dirname, '..', 'images');
+const CSS_PATH = path.resolve(__dirname, '..', 'popup.css');
 
 // Ensure output directory exists
 if (!fs.existsSync(OUTPUT_DIR)) {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 }
 
+/**
+ * Inject CSS inline into HTML (setContent doesn't resolve relative paths)
+ */
+function injectCss(html, css) {
+  return html.replace(
+    /<link\s+rel="stylesheet"\s+href="\.\.\/popup\.css">/i,
+    `<style>\n${css}\n</style>`
+  );
+}
+
 async function takeScreenshots() {
   console.log('🎬 Taking screenshots of mock HTML files...');
+
+  // Read the CSS file
+  const css = fs.readFileSync(CSS_PATH, 'utf8');
+  console.log(`   Loaded popup.css (${css.length} bytes)`);
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -26,8 +41,12 @@ async function takeScreenshots() {
 
   try {
     // Read mock HTML files
-    const pipelineHtml = fs.readFileSync(path.join(__dirname, 'mock-pipeline.html'), 'utf8');
-    const updateHtml = fs.readFileSync(path.join(__dirname, 'mock-update.html'), 'utf8');
+    let pipelineHtml = fs.readFileSync(path.join(__dirname, 'mock-pipeline.html'), 'utf8');
+    let updateHtml = fs.readFileSync(path.join(__dirname, 'mock-update.html'), 'utf8');
+
+    // Inject CSS inline
+    pipelineHtml = injectCss(pipelineHtml, css);
+    updateHtml = injectCss(updateHtml, css);
 
     // Take pipeline screenshot
     console.log('📸 Taking pipeline screenshot...');
