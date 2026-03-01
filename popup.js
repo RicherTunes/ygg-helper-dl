@@ -8,14 +8,15 @@ document.addEventListener('DOMContentLoaded', () => {
     updateTimersList();
     updateStats();
     checkUpdateStatus();
-    
+    initDomainSettings();
+
     // Set version from manifest
     const manifest = chrome.runtime.getManifest();
     const versionEl = document.getElementById('appVersion');
     if (versionEl) {
         versionEl.innerText = `v${manifest.version}`;
     }
-    
+
     // Mise à jour régulière
     setInterval(() => {
         updateTimersList();
@@ -24,7 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Easter egg credits
     document.getElementById('creditsLink').addEventListener('click', (e) => {
-        chrome.tabs.create({ url: 'https://github.com/MoowGlax' });
+        chrome.tabs.create({ url: 'https://github.com/RicherTunes' });
     });
 
     // Clean all button
@@ -33,7 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
             updateTimersList();
         });
     });
-    
+
     // Update link
     const updateLink = document.getElementById('updateLink');
     if (updateLink) {
@@ -53,7 +54,7 @@ function checkUpdateStatus() {
         const updateInfo = result.ygg_update_available;
         const banner = document.getElementById('updateBanner');
         const versionSpan = document.getElementById('newVersion');
-        
+
         if (updateInfo && banner && versionSpan) {
             versionSpan.innerText = updateInfo.version;
             banner.style.display = 'flex';
@@ -75,11 +76,11 @@ function updateStats() {
 
 function formatTime(totalSeconds) {
     if (totalSeconds < 60) return `${totalSeconds}s`;
-    
+
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
-    
+
     if (hours > 0) {
         return `${hours}h ${minutes}m ${seconds}s`;
     }
@@ -108,7 +109,7 @@ function updateTimersList() {
 
         // Update badge counts
         countBadge.innerText = activeTimers.length;
-        
+
         const pendingTitle = document.getElementById('pendingSectionTitle');
         const pendingList = document.getElementById('pendingList');
         const pendingCount = document.getElementById('pendingCount');
@@ -136,7 +137,7 @@ function updateTimersList() {
             // Si nous avons des timers, on supprime l'état vide si présent
             const emptyState = container.querySelector('.empty-state');
             if (emptyState) emptyState.remove();
-            
+
             renderActiveList(activeTimers, container, now, timers);
         }
     });
@@ -145,7 +146,7 @@ function updateTimersList() {
 function renderPendingList(list, container) {
     // Nettoyage rapide (ou diff différée si on voulait optimiser)
     container.innerHTML = '';
-    
+
     list.forEach(item => {
         const card = document.createElement('div');
         card.className = 'timer-card pending';
@@ -218,26 +219,29 @@ function renderActiveList(list, container, now, allTimers) {
         if (isReady) {
             statusText.innerText = "Prêt à télécharger";
             statusText.style.color = "#2ecc71";
-            
+
             if (!actionBtn.classList.contains('ready')) {
                 actionBtn.classList.add('ready');
                 actionBtn.disabled = false;
                 actionBtn.style.backgroundColor = '';
                 actionBtn.innerHTML = `<span>📥 Télécharger</span>`;
-                
+
                 // Gestionnaire de clic (une seule fois)
                 actionBtn.onclick = () => {
                     actionBtn.innerHTML = `<span>🚀 Lancement...</span>`;
                     actionBtn.disabled = true;
-                    
+
                     // Ajout stats aussi ici
                     chrome.runtime.sendMessage({ action: "ADD_WASTED_TIME" });
 
                     const finalName = (timer.name || "Torrent").endsWith('.torrent') ? (timer.name || "Torrent") : (timer.name || "Torrent") + '.torrent';
 
+                    // Utiliser l'origin stocké dans le timer, ou fallback sur l'origin du tab
+                    const origin = timer.origin || 'https://www.yggtorrent.org';
+
                     chrome.runtime.sendMessage({
                         action: "SCHEDULE_DOWNLOAD",
-                        url: `https://www.yggtorrent.org/engine/download_torrent?id=${id}&token=${timer.token}`,
+                        url: `${origin}/engine/download_torrent?id=${id}&token=${timer.token}`,
                         filename: finalName
                     });
 
@@ -257,7 +261,7 @@ function renderActiveList(list, container, now, allTimers) {
         } else {
             statusText.innerText = `Patience... ${Math.ceil(remaining)}s`;
             statusText.style.color = '#94a3b8';
-            
+
             actionBtn.classList.remove('ready');
             actionBtn.disabled = true;
             actionBtn.style.backgroundColor = '#475569';
@@ -272,5 +276,90 @@ function renderActiveList(list, container, now, allTimers) {
         if (!list.find(t => t.id === id)) {
             card.remove();
         }
+    });
+}
+
+// --- Domain Settings ---
+function initDomainSettings() {
+    const toggle = document.getElementById('settingsToggle');
+    const body = document.getElementById('settingsBody');
+    const arrow = document.getElementById('settingsArrow');
+    const input = document.getElementById('domainInput');
+    const saveBtn = document.getElementById('saveDomainBtn');
+    const removeBtn = document.getElementById('removeDomainBtn');
+    const status = document.getElementById('domainStatus');
+
+    // Charger le domaine actuel
+    chrome.runtime.sendMessage({ action: "GET_DOMAIN_CONFIG" }, (response) => {
+        if (response && response.domain) {
+            input.value = response.domain;
+            removeBtn.style.display = 'block';
+            status.innerText = `Domaine actif: ${response.domain}`;
+            status.className = 'domain-status success';
+        }
+    });
+
+    // Toggle settings panel
+    toggle.addEventListener('click', () => {
+        const isOpen = body.style.display !== 'none';
+        body.style.display = isOpen ? 'none' : 'block';
+        arrow.classList.toggle('open', !isOpen);
+    });
+
+    // Save domain
+    saveBtn.addEventListener('click', async () => {
+        let domain = input.value.trim().toLowerCase();
+        if (!domain) {
+            status.innerText = "Veuillez entrer un domaine.";
+            status.className = 'domain-status error';
+            return;
+        }
+
+        // Nettoyer le domaine (enlever protocole/path si collé)
+        domain = domain.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
+        input.value = domain;
+
+        status.innerText = "Demande de permission...";
+        status.className = 'domain-status';
+
+        try {
+            // Demander la permission pour ce domaine
+            const granted = await chrome.permissions.request({
+                origins: [`*://*.${domain}/*`, `*://${domain}/*`]
+            });
+
+            if (!granted) {
+                status.innerText = "Permission refusée par le navigateur.";
+                status.className = 'domain-status error';
+                return;
+            }
+
+            // Enregistrer dans le background
+            chrome.runtime.sendMessage({ action: "SAVE_CUSTOM_DOMAIN", domain: domain }, (response) => {
+                if (response && response.success) {
+                    status.innerText = `Domaine enregistré ! Rechargez les pages YggTorrent.`;
+                    status.className = 'domain-status success';
+                    removeBtn.style.display = 'block';
+                } else {
+                    status.innerText = "Erreur lors de l'enregistrement.";
+                    status.className = 'domain-status error';
+                }
+            });
+        } catch (e) {
+            status.innerText = `Erreur: ${e.message}`;
+            status.className = 'domain-status error';
+        }
+    });
+
+    // Remove custom domain
+    removeBtn.addEventListener('click', () => {
+        chrome.runtime.sendMessage({ action: "REMOVE_CUSTOM_DOMAIN" }, (response) => {
+            if (response && response.success) {
+                input.value = '';
+                status.innerText = "Domaine personnalisé supprimé.";
+                status.className = 'domain-status';
+                removeBtn.style.display = 'none';
+            }
+        });
     });
 }

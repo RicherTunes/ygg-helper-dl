@@ -1,14 +1,16 @@
 // background.js
 // Service Worker pour YggTorrent Helper
-// Gestion du verrouillage global (1 seul timer actif) et des stats
+// Gestion du verrouillage global (1 seul timer actif), stats, et domaines dynamiques
 
 const STORAGE_KEY = 'ygg_timers';
 const STATS_KEY = 'ygg_stats_wasted';
+const DOMAIN_KEY = 'ygg_custom_domain';
 const CLEANUP_INTERVAL = 60 * 60 * 1000; // 1 heure
 
 // --- CONFIGURATION UPDATE ---
-// Remplacez par votre repo: USER/REPO/BRANCH
-const GITHUB_MANIFEST_URL = "https://raw.githubusercontent.com/MoowGlax/ygg-helper-dl/refs/heads/main/manifest.json";
+const GITHUB_REPO = "RicherTunes/ygg-helper-dl";
+const GITHUB_MANIFEST_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/refs/heads/main/manifest.json`;
+const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases`;
 const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24 heures
 
 // État global : Un seul timer peut être actif à la fois
@@ -17,11 +19,13 @@ let isTimerRunning = false;
 // Au démarrage
 chrome.runtime.onStartup.addListener(() => {
     checkForUpdates();
+    registerCustomDomainScripts();
 });
 
 // À l'installation
 chrome.runtime.onInstalled.addListener(() => {
     checkForUpdates();
+    registerCustomDomainScripts();
 });
 
 // Check régulier
@@ -37,12 +41,12 @@ async function checkForUpdates() {
 
         if (isNewerVersion(localManifest.version, remoteManifest.version)) {
             console.log(`[Update] Nouvelle version disponible: ${remoteManifest.version}`);
-            
+
             // Stocker l'info de mise à jour
-            chrome.storage.local.set({ 
+            chrome.storage.local.set({
                 'ygg_update_available': {
                     version: remoteManifest.version,
-                    url: "https://github.com/MoowGlax/ygg-helper-dl/releases"
+                    url: GITHUB_RELEASES_URL
                 }
             });
 
@@ -62,7 +66,7 @@ async function checkForUpdates() {
 function isNewerVersion(local, remote) {
     const v1 = local.split('.').map(Number);
     const v2 = remote.split('.').map(Number);
-    
+
     for (let i = 0; i < Math.max(v1.length, v2.length); i++) {
         const n1 = v1[i] || 0;
         const n2 = v2[i] || 0;
@@ -72,9 +76,38 @@ function isNewerVersion(local, remote) {
     return false;
 }
 
+// --- Enregistrement dynamique de content scripts pour domaines personnalisés ---
+async function registerCustomDomainScripts() {
+    try {
+        const result = await chrome.storage.local.get([DOMAIN_KEY]);
+        const domain = result[DOMAIN_KEY];
+        if (!domain) return;
+
+        // Retirer l'ancien enregistrement s'il existe
+        try {
+            await chrome.scripting.unregisterContentScripts({ ids: ['ygg-custom-domain'] });
+        } catch (e) {
+            // Pas d'enregistrement précédent, OK
+        }
+
+        await chrome.scripting.registerContentScripts([{
+            id: 'ygg-custom-domain',
+            matches: [`*://*.${domain}/*`, `*://${domain}/*`],
+            js: ['content.js'],
+            css: ['content.css'],
+            runAt: 'document_idle',
+            persistAcrossSessions: true
+        }]);
+
+        console.log(`[Domain] Content scripts enregistrés pour: ${domain}`);
+    } catch (e) {
+        console.error("[Domain] Erreur enregistrement:", e);
+    }
+}
+
 // Gestion des messages
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    
+
     // Demande si on peut démarrer un timer
     if (request.action === "CAN_I_START") {
         sendResponse({ canStart: !isTimerRunning });
@@ -111,8 +144,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const targetTabId = request.tabId;
         if (targetTabId) {
             chrome.tabs.sendMessage(targetTabId, { action: "TRIGGER_START" });
-            // On met à jour le statut immédiatement pour éviter le lag UI
-            // (Le content script fera la mise à jour réelle avec le token plus tard)
         }
     }
 
@@ -138,11 +169,36 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 console.error("Erreur téléchargement:", chrome.runtime.lastError);
             } else {
                 console.log(`Téléchargement lancé: ${downloadId}`);
-                // Le téléchargement a commencé, on considère le timer comme "fini" pour le verrouillage
-                // (Même si en théorie il était déjà fini pour être cliquable)
-                chrome.storage.local.set({ [LOCK_KEY]: false });
+                isTimerRunning = false;
             }
         });
+    }
+
+    // Configuration du domaine personnalisé
+    else if (request.action === "SAVE_CUSTOM_DOMAIN") {
+        const domain = request.domain;
+        chrome.storage.local.set({ [DOMAIN_KEY]: domain }, async () => {
+            await registerCustomDomainScripts();
+            sendResponse({ success: true });
+        });
+        return true; // Asynchrone
+    }
+
+    else if (request.action === "GET_DOMAIN_CONFIG") {
+        chrome.storage.local.get([DOMAIN_KEY], (result) => {
+            sendResponse({ domain: result[DOMAIN_KEY] || '' });
+        });
+        return true; // Asynchrone
+    }
+
+    else if (request.action === "REMOVE_CUSTOM_DOMAIN") {
+        chrome.storage.local.remove(DOMAIN_KEY, async () => {
+            try {
+                await chrome.scripting.unregisterContentScripts({ ids: ['ygg-custom-domain'] });
+            } catch (e) {}
+            sendResponse({ success: true });
+        });
+        return true;
     }
 });
 
@@ -167,7 +223,8 @@ function cleanupStorage() {
 
         for (const [id, data] of Object.entries(timers)) {
             // Nettoyer les vieux timers (> 1h)
-            if (now - data.startTime > CLEANUP_INTERVAL) {
+            const timestamp = data.startTime || data.addedAt || 0;
+            if (now - timestamp > CLEANUP_INTERVAL) {
                 delete timers[id];
                 changed = true;
             }

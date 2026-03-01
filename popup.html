@@ -52,6 +52,22 @@
     <div id="pendingList" class="timers-list"></div>
   </main>
 
+  <div class="settings-section">
+    <div class="settings-toggle" id="settingsToggle">
+      <span>Domaine personnalisé</span>
+      <span class="settings-arrow" id="settingsArrow">&#9654;</span>
+    </div>
+    <div class="settings-body" id="settingsBody" style="display: none;">
+      <p class="settings-hint">Si YggTorrent a changé de domaine et l'extension ne fonctionne pas, entrez le nouveau domaine ici (ex: yggtorrent.wtf)</p>
+      <div class="domain-input-row">
+        <input type="text" id="domainInput" class="domain-input" placeholder="yggtorrent.example">
+        <button id="saveDomainBtn" class="domain-save-btn">OK</button>
+      </div>
+      <div id="domainStatus" class="domain-status"></div>
+      <button id="removeDomainBtn" class="domain-remove-btn" style="display: none;">Supprimer le domaine personnalisé</button>
+    </div>
+  </div>
+
   <footer class="app-footer">
     <button id="cleanAllBtn" class="secondary-btn">Tout nettoyer</button>
   </footer>

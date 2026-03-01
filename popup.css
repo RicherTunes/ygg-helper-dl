@@ -262,3 +262,120 @@ body {
   padding: 40px 20px;
   color: var(--text-secondary);
 }
+
+/* Settings Section */
+.settings-section {
+  border-top: 1px solid #334155;
+  margin-top: auto;
+}
+
+.settings-toggle {
+  padding: 12px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  transition: color 0.2s;
+}
+
+.settings-toggle:hover {
+  color: var(--text-primary);
+}
+
+.settings-arrow {
+  font-size: 10px;
+  transition: transform 0.2s;
+}
+
+.settings-arrow.open {
+  transform: rotate(90deg);
+}
+
+.settings-body {
+  padding: 0 20px 16px;
+}
+
+.settings-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 10px;
+  line-height: 1.4;
+}
+
+.domain-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.domain-input {
+  flex: 1;
+  background-color: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.domain-input:focus {
+  border-color: var(--accent-blue);
+}
+
+.domain-input::placeholder {
+  color: #475569;
+}
+
+.domain-save-btn {
+  background-color: var(--accent-blue);
+  border: none;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.domain-save-btn:hover {
+  opacity: 0.9;
+}
+
+.domain-status {
+  font-size: 12px;
+  margin-top: 8px;
+  min-height: 16px;
+}
+
+.domain-status.success {
+  color: var(--accent-green);
+}
+
+.domain-status.error {
+  color: #ef4444;
+}
+
+.domain-remove-btn {
+  background: transparent;
+  border: 1px solid #475569;
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: all 0.2s;
+}
+
+.domain-remove-btn:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+}

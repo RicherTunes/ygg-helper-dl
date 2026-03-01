@@ -1,7 +1,7 @@
 # ⚡ YggTorrent Helper (Smart Timer)
 
-![Version](https://img.shields.io/badge/version-1.3-blue.svg)
-![Compatibility](https://img.shields.io/badge/browser-Chrome%20%7C%20Opera-red.svg)
+![Version](https://img.shields.io/badge/version-1.4-blue.svg)
+![Compatibility](https://img.shields.io/badge/browser-Chrome%20%7C%20Brave%20%7C%20Opera%20%7C%20Edge-red.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 Une extension web optimisée pour YggTorrent qui gère intelligemment le temps d'attente de téléchargement pour vous permettre de naviguer librement. Plus besoin d'attendre 30 secondes devant votre écran !
@@ -17,6 +17,7 @@ Une extension web optimisée pour YggTorrent qui gère intelligemment le temps d
   - **Démarrage Manuel** : Lancez les téléchargements en attente d'un simple clic quand le précédent est fini.
 - **Navigation Libre** : Grâce au Service Worker, le timer continue même si vous fermez l'onglet ou naviguez ailleurs.
 - **Mises à jour Automatiques** : Système de notification intégré pour vous avertir des nouvelles versions disponibles sur GitHub.
+- **Multi-Domaines** : Supporte tous les domaines YggTorrent connus (`.org`, `.wtf`, `.support`, `.top`, `.town`, etc.) avec possibilité d'ajouter un domaine personnalisé depuis le popup.
 
 ![Notification de Mise à jour](images/update_notif.png)
 
@@ -24,36 +25,39 @@ Une extension web optimisée pour YggTorrent qui gère intelligemment le temps d
 
 Cette extension n'est pas disponible sur le Chrome Web Store. Vous avez deux options pour l'installer.
 
-### Option 1 : Via le fichier .crx (Recommandé)
-
-1. **Télécharger l'extension** :
-   - Rendez-vous dans la section [Releases](https://github.com/MoowGlax/ygg-helper-dl/releases) et téléchargez le dernier fichier `.crx`.
-
-2. **Ouvrir les extensions** :
-   - Dans votre navigateur, ouvrez la page de gestion des extensions :
-     - Chrome : `chrome://extensions`
-     - Opera : `opera://extensions`
-     - Edge : `edge://extensions`
-
-3. **Installer** :
-   - Activez le **Mode développeur** (en haut à droite).
-   - Glissez-déposez le fichier `.crx` téléchargé directement dans la page des extensions.
-   - Acceptez l'installation si demandé.
-
-### Option 2 : Via le code source (Développement)
+### Option 1 : Via le code source (Recommandé)
 
 1. **Télécharger le projet** :
    - Clonez ce dépôt ou téléchargez le fichier ZIP (Code > Download ZIP) et décompressez-le.
-   
+
 2. **Charger l'extension** :
-   - Allez sur la page des extensions (`chrome://extensions`).
+   - Allez sur la page des extensions de votre navigateur :
+     - Chrome : `chrome://extensions`
+     - Brave : `brave://extensions`
+     - Opera : `opera://extensions`
+     - Edge : `edge://extensions`
    - Activez le **Mode développeur**.
    - Cliquez sur **"Charger l'extension non empaquetée"** (Load unpacked).
    - Sélectionnez le dossier racine du projet.
 
+3. **Épingler l'extension** :
+   - Cliquez sur l'icône puzzle (🧩) dans la barre d'outils.
+   - Épinglez **YggHelper** pour un accès rapide.
+
+### Option 2 : Via le fichier .crx
+
+1. **Télécharger l'extension** :
+   - Rendez-vous dans la section [Releases](https://github.com/RicherTunes/ygg-helper-dl/releases) et téléchargez le dernier fichier `.crx`.
+
+2. **Installer** :
+   - Ouvrez la page des extensions et activez le **Mode développeur**.
+   - Glissez-déposez le fichier `.crx` directement dans la page des extensions.
+
+> **Note :** Certains navigateurs (Brave notamment) peuvent restreindre les extensions installées via `.crx`. Préférez l'option 1 pour le développement et le test.
+
 ## 🦊 Installation sur Firefox
 
-**WIP** 
+**WIP**
 
 ## 🛠️ Utilisation
 
@@ -63,6 +67,26 @@ Cette extension n'est pas disponible sur le Chrome Web Store. Vous avez deux opt
 4. Le timer démarre en arrière-plan. Vous pouvez continuer à naviguer !
 5. Ouvrez l'extension (clic sur l'icône ⚡) pour voir l'état de vos téléchargements.
 6. Une fois le timer terminé, cliquez sur "Télécharger" pour lancer le téléchargement.
+
+### 🌐 Domaine personnalisé
+
+Si YggTorrent change de domaine et que l'extension ne fonctionne plus :
+
+1. Ouvrez le popup de l'extension.
+2. Dépliez la section **"Domaine personnalisé"** en bas.
+3. Entrez le nouveau domaine (ex: `yggtorrent.exemple`).
+4. Cliquez **OK** et acceptez la demande de permission.
+5. Rechargez la page YggTorrent.
+
+## 🔨 Build
+
+Un script PowerShell est fourni pour générer un fichier `.crx` :
+
+```powershell
+.\build.ps1
+```
+
+La clé de signature (`ygg-helper-dl-key.pem`) est générée automatiquement au premier build et stockée dans le dossier parent. Ne la partagez pas.
 
 ## 🤝 Contribution
 

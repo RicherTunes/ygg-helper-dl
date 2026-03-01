@@ -275,7 +275,8 @@ const YggTimerManager = {
             timers[torrentId] = {
                 token: token,
                 startTime: Date.now(),
-                name: torrentName
+                name: torrentName,
+                origin: window.location.origin
             };
             chrome.storage.local.set({ [this.storageKey]: timers });
         });
