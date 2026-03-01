@@ -33,13 +33,16 @@ Une extension web optimisée pour YggTorrent qui gère intelligemment le temps d
 
 | Fonctionnalité | MoowGlax (original) | RicherTunes (ce fork) |
 |---|---|---|
-| File d'attente | Manuelle (clic requis) | Automatique (pipeline) |
-| Téléchargement | Clic "Télécharger" requis | Auto-download après countdown |
-| Rate-limiting | Aucune gestion | Backoff exponentiel + retry |
-| Service Worker restart | Perte de l'état | Récupération automatique |
-| Domaines | Un seul | 24 + domaine personnalisé |
-| Timer | setInterval (fragile) | chrome.alarms (fiable MV3) |
-| Navigateurs | Chrome | Chrome, Brave, Opera, Edge |
+| File d'attente | Manuelle (clic requis) | **Automatique (pipeline persistant)** |
+| Téléchargement | Clic "Télécharger" requis | **Auto-download après countdown** |
+| Rate-limiting | Aucune gestion | **Classification 4 types + backoff exponentiel** |
+| Service Worker restart | Perte de l'état | **Récupération automatique + détection stale** |
+| Domaines | Un seul | **24 domaines + domaine personnalisé** |
+| Timer | setInterval (fragile) | **chrome.alarms (fiable MV3)** |
+| Navigation SPA | Non supportée | **Détection pushState/popstate/bfcache** |
+| Onglets fermés | Échec du token | **Fallback onglet caché réutilisable** |
+| Navigateurs | Chrome | **Chrome, Brave, Opera, Edge** |
+| Sécurité | Basique | **Sanitisation XSS, verrou lease-based** |
 
 ## 📦 Installation
 

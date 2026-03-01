@@ -156,3 +156,87 @@ Multiple async operations may try to process the queue simultaneously. The lock 
 ### Why hidden tab fallback?
 
 If the user closes all YggTorrent tabs, there's no content script to fetch tokens. The hidden tab provides a temporary context for token acquisition.
+
+## Error Classification System
+
+The pipeline classifies errors into 4 types with different handling policies:
+
+| Error Type | Detection | Policy |
+|------------|-----------|--------|
+| `rate_limit` | HTTP 429, HTML response, "wasn't available" message | Global backoff (all items wait) |
+| `auth` | HTTP 403, login redirect | No auto-retry (user must login) |
+| `not_found` | HTTP 404 | Remove from queue permanently |
+| `network` | Timeout, fetch error | Per-item exponential backoff (max 5 retries) |
+
+### Consecutive Failures Escalation
+
+Unknown errors are tracked via `consecutiveFailures` counter. After 2 consecutive unknown errors, the pipeline escalates to rate-limit mode as a safety net.
+
+## Stale State Detection
+
+The pipeline detects and recovers from stuck states:
+
+| State | Timeout | Recovery |
+|-------|---------|----------|
+| `requesting` | 30 seconds | Reset to `queued`, retry |
+| `downloading` | 5 minutes | Mark as `error`, retry if under max |
+
+## Request Deduplication
+
+Each token request includes a `requestNonce` (random ID). Late responses with outdated nonces are ignored to prevent state corruption.
+
+## Hidden Tab Optimization
+
+The hidden tab is **reused** across multiple requests when possible:
+- Tab is created on first fallback
+- Tab persists for subsequent requests to same domain
+- Tab is recycled when domain changes
+- Reduces overhead of repeated tab creation
+
+## SPA/bfcache Navigation Handling
+
+The content script handles modern navigation patterns:
+
+```mermaid
+graph LR
+    A[pageshow.persisted] --> D[refreshTorrentContext]
+    B[popstate] --> D
+    C[pushState/replaceState] --> D
+    D --> E{torrentId changed?}
+    E -->|Yes| F[Re-enqueue new torrent]
+    E -->|No| G[No action]
+```
+
+The history API is patched to intercept `pushState`/`replaceState` calls.
+
+## Download Filename Sanitization
+
+Filenames are sanitized before download to prevent filesystem errors:
+1. Remove control characters (`\x00-\x1f`)
+2. Remove filesystem-unsafe characters (`<>:"/\|?*`)
+3. Remove trailing dots/spaces (Windows issue)
+4. Truncate to 150 characters max
+5. Append `.torrent` extension if missing
+
+## Pipeline Recovery on Startup
+
+When the Service Worker restarts (`onStartup`/`onInstalled`):
+
+1. **Recreate missing alarms** — Countdown alarms are recreated from `countdownEndsAt`
+2. **Clean stale states** — Items stuck in `requesting`/`downloading` are reset
+3. **Resume processing** — `processQueue()` is called to continue
+
+## Configuration Constants
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `TIMER_DURATION` | 30s | YggTorrent mandatory wait |
+| `LOCK_TTL` | 15s | Pipeline lock duration |
+| `STALE_REQUESTING_TIMEOUT` | 30s | Max time waiting for token |
+| `STALE_DOWNLOADING_TIMEOUT` | 5min | Max time for download |
+| `COOLDOWN_BETWEEN_DOWNLOADS` | 3s | Delay between downloads |
+| `MAX_RETRIES` | 5 | Max network error retries |
+| `BASE_RETRY_DELAY` | 5s | Initial retry delay |
+| `MAX_RETRY_DELAY` | 2min | Max retry delay cap |
+| `CLEANUP_INTERVAL` | 1h | Cleanup completed timers |
+
