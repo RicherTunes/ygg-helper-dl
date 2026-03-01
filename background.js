@@ -101,7 +101,7 @@ async function releaseLock(owner) {
 }
 
 async function processQueue() {
-    const lockOwner = await acquireLock();
+    let lockOwner = await acquireLock();
     if (!lockOwner) {
         console.log('[Pipeline] Lock déjà pris, abandon');
         return;
@@ -117,7 +117,7 @@ async function processQueue() {
         // Vérifier le rate-limit global
         if (pipelineState.rateLimitUntil && pipelineState.rateLimitUntil > now) {
             console.log(`[Pipeline] Rate-limit actif jusqu'à ${new Date(pipelineState.rateLimitUntil).toLocaleTimeString()}`);
-            scheduleProcessQueue(pipelineState.rateLimitUntil);
+            await scheduleProcessQueue(pipelineState.rateLimitUntil);
             return;
         }
 
@@ -199,7 +199,7 @@ async function processQueue() {
         // Vérifier le cooldown entre téléchargements
         if (pipelineState.nextProcessAt && pipelineState.nextProcessAt > now) {
             console.log(`[Pipeline] Cooldown actif, prochain traitement à ${new Date(pipelineState.nextProcessAt).toLocaleTimeString()}`);
-            scheduleProcessQueue(pipelineState.nextProcessAt);
+            await scheduleProcessQueue(pipelineState.nextProcessAt);
             if (storageChanged) {
                 await chrome.storage.local.set({ [STORAGE_KEY]: timers });
             }
@@ -231,13 +231,21 @@ async function processQueue() {
         await chrome.storage.local.set({ [STORAGE_KEY]: timers });
 
         // Watchdog: si le token n'arrive pas, processQueue détectera le stale
-        scheduleProcessQueue(now + STALE_REQUESTING_TIMEOUT + 1000);
+        await scheduleProcessQueue(now + STALE_REQUESTING_TIMEOUT + 1000);
 
         console.log(`[Pipeline] Demande de token pour ${nextId} ("${timer.name}") nonce=${timer.requestNonce}`);
+
+        // Libérer le lock AVANT la requête de token (peut durer 30s+ avec onglet caché)
+        // Le statut 'requesting' empêche processQueue de lancer un autre token
+        await releaseLock(lockOwner);
+        lockOwner = null;
+
         await requestToken(nextId, timer);
 
     } finally {
-        await releaseLock(lockOwner);
+        if (lockOwner) {
+            await releaseLock(lockOwner);
+        }
     }
 }
 
@@ -328,7 +336,7 @@ async function requestTokenViaHiddenTab(torrentId, origin, nonce) {
         if (hiddenTabId !== null) {
             try {
                 const tab = await chrome.tabs.get(hiddenTabId);
-                if (tab && tab.url && tab.url.startsWith(origin)) {
+                if (tab && tab.url && new URL(tab.url).origin === origin) {
                     // Onglet existe et bon domaine, envoyer directement
                     return await sendTokenRequestToTab(hiddenTabId, torrentId, origin, nonce);
                 }
@@ -555,7 +563,7 @@ async function handleTokenError(torrentId, errorMessage, httpStatus, responseBod
         timer.errorType = errorType;
 
         console.log(`[Pipeline] Rate-limit #${pipelineState.rateLimitCount}, backoff ${Math.round(backoff / 1000)}s`);
-        scheduleProcessQueue(pipelineState.rateLimitUntil);
+        await scheduleProcessQueue(pipelineState.rateLimitUntil);
 
     } else if (errorType === 'not_found') {
         // Supprimer de la queue
@@ -595,7 +603,7 @@ async function handleTokenError(torrentId, errorMessage, httpStatus, responseBod
             timer.errorType = errorType;
             timer.nextRetryAt = now + delay;
             console.log(`[Pipeline] Timer ${torrentId} retry #${timer.retryCount} dans ${Math.round(delay / 1000)}s`);
-            scheduleProcessQueue(timer.nextRetryAt);
+            await scheduleProcessQueue(timer.nextRetryAt);
         }
     }
 
@@ -606,7 +614,7 @@ async function handleTokenError(torrentId, errorMessage, httpStatus, responseBod
 
     // Relancer le pipeline pour le prochain item (sauf si rate-limit)
     if (errorType !== 'rate_limit') {
-        scheduleProcessQueue(Date.now() + 1000);
+        await scheduleProcessQueue(Date.now() + 1000);
     }
 }
 
@@ -625,10 +633,13 @@ async function handleCountdownComplete(torrentId) {
 }
 
 async function triggerDownload(torrentId, timer) {
-    const downloadUrl = `${timer.origin}/engine/download_torrent?id=${torrentId}&token=${timer.token}`;
-    const filename = (timer.name || 'Torrent').endsWith('.torrent')
-        ? (timer.name || 'Torrent')
-        : (timer.name || 'Torrent') + '.torrent';
+    const downloadUrl = `${timer.origin}/engine/download_torrent?id=${encodeURIComponent(torrentId)}&token=${encodeURIComponent(timer.token)}`;
+    const rawName = (timer.name || 'Torrent')
+        .replace(/[\x00-\x1f<>:"/\\|?*]/g, '_') // control chars + filesystem-unsafe
+        .replace(/[.\s]+$/, '')                    // trailing dots/spaces (Windows)
+        .slice(0, 150)                             // bound length
+        .trim() || 'Torrent';
+    const filename = rawName.endsWith('.torrent') ? rawName : rawName + '.torrent';
 
     console.log(`[Pipeline] Lancement téléchargement: ${filename}`);
 
@@ -668,10 +679,10 @@ async function triggerDownload(torrentId, timer) {
 
     if (timer.status === 'error') {
         // Erreur immédiate au lancement — relancer le pipeline pour le prochain item
-        scheduleProcessQueue(Date.now() + 1000);
+        await scheduleProcessQueue(Date.now() + 1000);
     } else if (timer.status === 'downloading') {
         // Watchdog: si onChanged est raté, processQueue détectera le stale
-        scheduleProcessQueue(Date.now() + STALE_DOWNLOADING_TIMEOUT + 1000);
+        await scheduleProcessQueue(Date.now() + STALE_DOWNLOADING_TIMEOUT + 1000);
     }
 }
 
@@ -713,7 +724,7 @@ chrome.downloads.onChanged.addListener(async (delta) => {
         });
 
         // Planifier le prochain traitement
-        scheduleProcessQueue(pipelineState.nextProcessAt);
+        await scheduleProcessQueue(pipelineState.nextProcessAt);
 
         // Fermer l'onglet caché si plus rien à traiter sur ce domaine
         const remainingForOrigin = newQueue.some(id =>
@@ -734,7 +745,7 @@ chrome.downloads.onChanged.addListener(async (delta) => {
 
         if (timer.retryCount <= MAX_RETRIES) {
             timer.nextRetryAt = now + calculateRetryDelay(timer.retryCount);
-            scheduleProcessQueue(timer.nextRetryAt);
+            await scheduleProcessQueue(timer.nextRetryAt);
         }
 
         await chrome.storage.local.set({ [STORAGE_KEY]: timers });
@@ -1024,7 +1035,7 @@ async function recoverPipeline() {
 
     // Relancer le pipeline
     if (queue.length > 0) {
-        scheduleProcessQueue(Date.now() + 500);
+        await scheduleProcessQueue(Date.now() + 500);
     }
 }
 

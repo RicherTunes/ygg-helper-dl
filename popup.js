@@ -153,20 +153,47 @@ function createPipelineCard(item) {
     const card = document.createElement('div');
     card.id = `timer-${item.id}`;
     card.className = `timer-card status-${item.status}`;
-    card.innerHTML = `
-        <div class="timer-header">
-            <div class="timer-name" title="${item.name}">${item.name || 'Torrent #' + item.id}</div>
-            <span class="phase-badge ${item.status}">${getStatusLabel(item.status)}</span>
-        </div>
-        <div class="timer-progress-container">
-            <div class="timer-progress-bar" style="width: 0%"></div>
-        </div>
-        <div class="timer-footer">
-            <span class="timer-status"></span>
-            <div class="action-group"></div>
-        </div>
-        <div class="timer-error" style="display:none"></div>
-    `;
+
+    const header = document.createElement('div');
+    header.className = 'timer-header';
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'timer-name';
+    nameEl.textContent = item.name || 'Torrent #' + item.id;
+    nameEl.title = item.name || '';
+
+    const badge = document.createElement('span');
+    badge.className = `phase-badge ${item.status}`;
+    badge.textContent = getStatusLabel(item.status);
+
+    header.appendChild(nameEl);
+    header.appendChild(badge);
+
+    const progressContainer = document.createElement('div');
+    progressContainer.className = 'timer-progress-container';
+    const progressBar = document.createElement('div');
+    progressBar.className = 'timer-progress-bar';
+    progressBar.style.width = '0%';
+    progressContainer.appendChild(progressBar);
+
+    const footer = document.createElement('div');
+    footer.className = 'timer-footer';
+    const statusEl = document.createElement('span');
+    statusEl.className = 'timer-status';
+    const actionGroup = document.createElement('div');
+    actionGroup.className = 'action-group';
+    footer.appendChild(statusEl);
+    footer.appendChild(actionGroup);
+
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'timer-error';
+    errorDiv.style.display = 'none';
+
+    card.appendChild(header);
+    card.appendChild(progressContainer);
+    card.appendChild(footer);
+    card.appendChild(errorDiv);
+
     return card;
 }
 
@@ -199,7 +226,7 @@ function updatePipelineCard(card, item) {
                 statusText.innerText = item.position > 0 ? `Position #${item.position} dans la file` : 'En attente';
                 statusText.style.color = '#8b5cf6';
             }
-            actionGroup.innerHTML = `<button class="action-btn remove" data-id="${item.id}">Retirer</button>`;
+            setActionButtons(actionGroup, item.id, ['remove']);
             break;
 
         case 'requesting':
@@ -241,12 +268,10 @@ function updatePipelineCard(card, item) {
 
             if (item.lastError) {
                 errorDiv.style.display = 'block';
-                errorDiv.innerText = item.lastError;
+                errorDiv.textContent = item.lastError;
             }
 
-            let buttons = `<button class="action-btn retry" data-id="${item.id}">Réessayer</button>`;
-            buttons += `<button class="action-btn remove" data-id="${item.id}">Retirer</button>`;
-            actionGroup.innerHTML = buttons;
+            setActionButtons(actionGroup, item.id, ['retry', 'remove']);
 
             if (item.nextRetryAt && item.nextRetryAt > now) {
                 const retryIn = Math.ceil((item.nextRetryAt - now) / 1000);
@@ -258,19 +283,6 @@ function updatePipelineCard(card, item) {
             progressBar.style.width = '0%';
             statusText.innerText = item.status;
     }
-
-    // Attacher les event listeners
-    actionGroup.querySelectorAll('.retry').forEach(btn => {
-        btn.onclick = () => {
-            chrome.runtime.sendMessage({ action: 'RETRY_TIMER', torrentId: btn.dataset.id });
-        };
-    });
-
-    actionGroup.querySelectorAll('.remove').forEach(btn => {
-        btn.onclick = () => {
-            chrome.runtime.sendMessage({ action: 'REMOVE_TIMER', torrentId: btn.dataset.id });
-        };
-    });
 }
 
 function renderCompletedCards(items, container) {
@@ -279,25 +291,39 @@ function renderCompletedCards(items, container) {
     items.forEach(item => {
         const card = document.createElement('div');
         card.className = 'timer-card status-done';
-        const timeAgo = formatTimeAgo(item.completedAt);
 
-        card.innerHTML = `
-            <div class="timer-header">
-                <div class="timer-name" title="${item.name}">${item.name || 'Torrent #' + item.id}</div>
-                <span class="phase-badge done">Terminé</span>
-            </div>
-            <div class="timer-footer">
-                <span class="timer-status" style="color: #6b7280">${timeAgo}</span>
-                <div class="action-group">
-                    <button class="action-btn remove" data-id="${item.id}">Retirer</button>
-                </div>
-            </div>
-        `;
+        const header = document.createElement('div');
+        header.className = 'timer-header';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'timer-name';
+        nameEl.textContent = item.name || 'Torrent #' + item.id;
+        nameEl.title = item.name || '';
+        const badge = document.createElement('span');
+        badge.className = 'phase-badge done';
+        badge.textContent = 'Terminé';
+        header.appendChild(nameEl);
+        header.appendChild(badge);
 
-        card.querySelector('.remove').onclick = () => {
+        const footer = document.createElement('div');
+        footer.className = 'timer-footer';
+        const statusEl = document.createElement('span');
+        statusEl.className = 'timer-status';
+        statusEl.style.color = '#6b7280';
+        statusEl.textContent = formatTimeAgo(item.completedAt);
+        const actionGroup = document.createElement('div');
+        actionGroup.className = 'action-group';
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'action-btn remove';
+        removeBtn.textContent = 'Retirer';
+        removeBtn.onclick = () => {
             chrome.runtime.sendMessage({ action: 'REMOVE_TIMER', torrentId: item.id });
         };
+        actionGroup.appendChild(removeBtn);
+        footer.appendChild(statusEl);
+        footer.appendChild(actionGroup);
 
+        card.appendChild(header);
+        card.appendChild(footer);
         container.appendChild(card);
     });
 }
@@ -323,6 +349,32 @@ function updateCountdowns() {
             statusText.style.color = remaining > 0 ? '#3b82f6' : '#10b981';
         }
     });
+}
+
+// --- Action Buttons (DOM-safe, pas de innerHTML avec données utilisateur) ---
+
+function setActionButtons(container, torrentId, actions) {
+    container.innerHTML = '';
+
+    if (actions.includes('retry')) {
+        const retryBtn = document.createElement('button');
+        retryBtn.className = 'action-btn retry';
+        retryBtn.textContent = 'Réessayer';
+        retryBtn.onclick = () => {
+            chrome.runtime.sendMessage({ action: 'RETRY_TIMER', torrentId: torrentId });
+        };
+        container.appendChild(retryBtn);
+    }
+
+    if (actions.includes('remove')) {
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'action-btn remove';
+        removeBtn.textContent = 'Retirer';
+        removeBtn.onclick = () => {
+            chrome.runtime.sendMessage({ action: 'REMOVE_TIMER', torrentId: torrentId });
+        };
+        container.appendChild(removeBtn);
+    }
 }
 
 // --- Helpers ---

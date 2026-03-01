@@ -11,7 +11,7 @@
 - **6 états visuels** : `queued`, `requesting`, `counting`, `downloading`, `done`, `error` — avec badges et couleurs distinctes dans le popup et le widget.
 - **Section "Terminés"** dans le popup pour voir l'historique des téléchargements.
 - **Boutons Retry/Retirer** pour les torrents en erreur dans le popup.
-- **`chrome.alarms`** : Remplacement de tous les `setInterval` par des alarmes Chrome pour la fiabilité MV3.
+- **`chrome.alarms`** : Remplacement des `setInterval`/`setTimeout` de scheduling par des alarmes Chrome pour la fiabilité MV3 (les countdowns UI restent en `setInterval` local).
 - **`chrome.downloads.onChanged`** : Suivi de la complétion des téléchargements via l'API native.
 - **Stockage amélioré** : Nouvelles clés `ygg_queue` (ordre de la file), `ygg_pipeline_state` (état global), `ygg_pipeline_lock` (verrou lease-based).
 
