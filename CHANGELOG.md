@@ -1,5 +1,24 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- **AGENTS.md documentation hierarchy** — AI-readable documentation for the root, `icons/`, and `images/` directories to help AI assistants understand the codebase structure.
+- **CLAUDE.md enhancements** — Added File Reference table, Testing section, and Commit Guidelines.
+
+## [1.3.2] - 2026-03-01
+
+### Fixed
+- **Bug `LOCK_KEY` constant** : La constante était définie après son utilisation, causant une erreur silencieuse.
+- **Scheduling async** : Les appels async dans `processQueue()` sont maintenant correctement séquencés.
+- **XSS vulnerability** : Sanitisation du nom du torrent avant affichage dans l'UI (`textContent` au lieu de `innerHTML`).
+- **Sanitisation des erreurs** : Les messages d'erreur sont maintenant échappés avant affichage.
+
 ## [1.3.2] - 2026-03-01
 
 ### Added
