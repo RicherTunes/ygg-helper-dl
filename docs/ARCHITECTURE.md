@@ -92,12 +92,26 @@ stateDiagram-v2
     requesting --> counting: TOKEN_RESULT success
     requesting --> error: TOKEN_RESULT failure
     counting --> downloading: countdown complete
-    downloading --> done: download complete
-    downloading --> error: download failed
+    downloading --> done: download complete (MIME verified)
+    downloading --> cancelled: USER_CANCELED
+    downloading --> error: download failed / HTML response
     error --> queued: retry
     done --> [*]
+    cancelled --> [*]
     error --> [*]: max retries
 ```
+
+**7 statuses**: `queued`, `requesting`, `counting`, `downloading`, `done`, `cancelled`, `error`
+
+| Status | Description | User Action Available |
+|--------|-------------|----------------------|
+| `queued` | Waiting in pipeline | Remove |
+| `requesting` | Fetching token from API | None |
+| `counting` | 30-second countdown active | Remove |
+| `downloading` | Chrome download in progress | None |
+| `done` | Successfully downloaded | Retélécharger |
+| `cancelled` | User canceled download | Réessayer |
+| `error` | Failed with classified error | Réessayer / Retirer |
 
 ## Storage Schema
 
@@ -247,4 +261,136 @@ When the Service Worker restarts (`onStartup`/`onInstalled`):
 | `BASE_RETRY_DELAY` | 5s | Initial retry delay |
 | `MAX_RETRY_DELAY` | 2min | Max retry delay cap |
 | `CLEANUP_INTERVAL` | 1h | Cleanup completed timers |
+| `DISMISSED_TTL` | 7 days | Expiry for dismissed torrents |
+
+## Download Verification
+
+When a download completes, the pipeline verifies it wasn't an HTML error page (expired/invalid token):
+
+```mermaid
+flowchart TD
+    A[Download Complete] --> B{Check MIME type}
+    B -->|text/html| C[Treat as rate_limit error]
+    C --> D[Delete downloaded file]
+    C --> E[Mark timer as error]
+    B -->|application/x-bittorrent| F[Mark as done]
+    F --> G[Set justCompleted flag]
+    G --> H[Trigger UI animation]
+```
+
+This catches cases where YggTorrent returns an error page instead of the torrent file.
+
+## User Cancellation Handling
+
+When a user manually cancels a download:
+
+```javascript
+if (delta.error.current === 'USER_CANCELED') {
+    timer.status = 'cancelled';  // Not 'error'
+    // No auto-retry, User can manually retry.
+}
+```
+
+**Cancelled items**:
+- Do not auto-retry
+- Show "Annulé — Réessayer" in UI
+- Can be re-enqueued via manual retry button
+
+## Retry Priority
+
+When user clicks "Réessayer":
+- Timer is added to **front** of queue (`queue.unshift()`)
+- Dismissed status is cleared
+- All retry state is reset (retryCount, nextRetryAt, lastError, errorType)
+
+## Cleanup Behavior
+
+The extension automatically cleans up old data:
+
+| Data Type | TTL | Action |
+|-----------|-----|--------|
+| `done` timers | 1 hour | Removed from storage |
+| `cancelled` timers | 1 hour | Removed from storage |
+| `error` timers (no retry) | 1 hour | Removed from storage |
+| `dismissed` entries | 7 days | Cleared from dismissed list |
+
+## Hidden Tab Cleanup
+
+The hidden tab is automatically closed when:
+1. No more queued items for that origin
+2. User removes all torrents from that domain
+3. Pipeline becomes empty
+
+## justCompleted Flag
+
+On download success, a `justCompleted: true` flag is set:
+- Used by content script to show "✅ Téléchargé !" animation
+- Widget fades out after 5 seconds
+- On page revisit, widget shows "✅ Déjà téléchargé — Retélécharger"
+| `DISMISSED_TTL` | 7 days | Remembered removal duration |
+
+## Download Verification
+
+Downloads are verified after completion to detect token expiration:
+
+| Check | Condition | Action |
+|-------|-----------|--------|
+| MIME type | `text/html` instead of torrent | Treat as `rate_limit`, delete file, retry |
+| User cancel | `USER_CANCELED` error | Set status `cancelled`, no auto-retry |
+| Network error | Other interruption | Set status `error`, retry with backoff |
+
+## Completion Tracking
+
+When a download completes successfully:
+
+1. **`justCompleted` flag** — Set to `true` for UI animation (fades out widget after 5s)
+2. **Cooldown** — 3-second delay before processing next item
+3. **Hidden tab cleanup** — Closed if no more items for that origin
+
+## Manual Retry Priority
+
+When user clicks "Réessayer" (retry):
+- Torrent is added to the **front** of the queue (`unshift`)
+- All error state is cleared (`retryCount`, `lastError`, etc.)
+- Removed from dismissed list (allows re-enqueue on page revisit)
+
+## Automatic Cleanup
+
+The pipeline automatically cleans up old data:
+
+| Data Type | TTL | Trigger |
+|-----------|-----|---------|
+| Completed torrents | 1 hour | `CLEANUP_INTERVAL` alarm |
+| Cancelled torrents | 1 hour | `CLEANUP_INTERVAL` alarm |
+| Dismissed torrents | 7 days | `CLEANUP_INTERVAL` alarm |
+| Stale requesting | 30 seconds | `processQueue()` |
+| Stale downloading | 5 minutes | `processQueue()` |
+
+## Update Notification System
+
+The extension checks for updates daily:
+
+1. **Fetch** manifest from GitHub (`GITHUB_MANIFEST_URL`)
+2. **Compare** versions using semantic versioning
+3. **Notify** via:
+   - Badge text "NEW" (red background)
+   - `ygg_update_available` storage entry
+   - Popup banner with link to releases
+
+## Custom Domain Script Registration
+
+Dynamic content script registration for new domains:
+
+```javascript
+chrome.scripting.registerContentScripts([{
+    id: 'ygg-custom-domain',
+    matches: [`*://*.${domain}/*`, `*://${domain}/*`],
+    js: ['content.js'],
+    css: ['content.css'],
+    runAt: 'document_idle',
+    persistAcrossSessions: true  // Survives browser restart
+}]);
+```
+
+Scripts are unregistered before re-registration to handle domain changes.
 

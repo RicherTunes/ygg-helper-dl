@@ -27,12 +27,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Gestion du rate-limit** : Détection des erreurs 429 et "file unavailable", avec backoff exponentiel global et retry automatique.
 - **Onglet caché fallback** : Si aucun onglet YggTorrent n'est ouvert, un onglet caché est créé temporairement pour obtenir le token.
 - **Récupération du pipeline** : En cas de redémarrage du Service Worker, le pipeline reprend depuis l'état persisté dans `chrome.storage`.
-- **6 états visuels** : `queued`, `requesting`, `counting`, `downloading`, `done`, `error` — avec badges et couleurs distinctes dans le popup et le widget.
+- **7 états visuels** : `queued`, `requesting`, `counting`, `downloading`, `done`, `cancelled`, `error` — avec badges et couleurs distinctes dans le popup et le widget.
 - **Section "Terminés"** dans le popup pour voir l'historique des téléchargements.
 - **Boutons Retry/Retirer** pour les torrents en erreur dans le popup.
 - **`chrome.alarms`** : Remplacement des `setInterval`/`setTimeout` de scheduling par des alarmes Chrome pour la fiabilité MV3 (les countdowns UI restent en `setInterval` local).
 - **`chrome.downloads.onChanged`** : Suivi de la complétion des téléchargements via l'API native.
-- **Stockage amélioré** : Nouvelles clés `ygg_queue` (ordre de la file), `ygg_pipeline_state` (état global), `ygg_pipeline_lock` (verrou lease-based).
+- **Stockage amélioré** : Nouvelles clés `ygg_queue` (ordre de la file), `ygg_pipeline_state` (état global), `ygg_pipeline_lock` (verrou lease-based), `ygg_dismissed` (torrents retirés par l'utilisateur).
+- **Statut `cancelled`** : Les téléchargements annulés par l'utilisateur ne sont pas retry automatiquement. L'utilisateur peut réessayer manuellement.
+- **Détection HTML** : Vérification MIME des téléchargements pour détecter les réponses HTML (token expiré) et les traiter comme rate-limit.
+- **Nettoyage automatique** : Suppression des items terminaux après 1h, et des dismissed après 7 jours.
+- **justCompleted flag** : Animation de succès dans le widget après téléchargement.
+- **Retry prioritaire** : Les retries manuels vont en tête de file (`queue.unshift()`).
 
 ### Changed
 - **content.js** : Restructuré en "thin sensor" — détecte les torrents, enqueue au pipeline, et affiche l'état. La logique d'orchestration est entièrement déplacée dans le background.
