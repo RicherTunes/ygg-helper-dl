@@ -46,6 +46,7 @@ L'extension gère une file d'attente de torrents :
 | 🟠 **Countdown** | Compte à rebours de 30 secondes |
 | 🟢 **Téléchargement** | Téléchargement en cours |
 | ✅ **Terminé** | Téléchargement réussi |
+| ⚫ **Annulé** | Annulé par l'utilisateur (pas de retry auto) |
 | 🔴 **Erreur** | Échec (retry automatique) |
 
 ### Popup Dashboard
@@ -53,8 +54,17 @@ L'extension gère une file d'attente de torrents :
 Cliquez sur l'icône ⚡ pour ouvrir le tableau de bord :
 
 - **Pipeline** : Torrents en cours de traitement
-- **Terminés** : Historique des téléchargements
+- **Terminés** : Historique des téléchargements (succès et annulations)
 - **Nettoyer** : Supprime les torrents terminés de la liste
+
+### Annuler et Réessayer
+
+- **Annuler un téléchargement** : Cliquez sur la croix (×) du widget ou "Retirer" dans le popup
+- **Réessayer** : Cliquez sur "Réessayer" pour un torrent en erreur ou annulé
+  - Le torrent passe **en priorité** (en tête de file)
+  - L'ancien état d'erreur est effacé
+
+> **Note** : Les téléchargements annulés ne sont pas réessayés automatiquement. Vous devez cliquer sur "Réessayer".
 
 ### Domaine personnalisé
 
@@ -94,6 +104,12 @@ Le torrent a peut-être été supprimé de YggTorrent.
 
 **Solution** : Cliquez sur "Retirer" dans le popup et cherchez un autre torrent.
 
+### "Erreur : Connexion requise"
+
+Votre session YggTorrent a expiré.
+
+**Solution** : Reconnectez-vous sur YggTorrent, puis cliquez sur "Réessayer" dans le popup.
+
 ### Le téléchargement ne se lance pas
 
 1. Vérifiez que les téléchargements ne sont pas bloqués par votre navigateur
@@ -112,6 +128,18 @@ Si une mise à jour est disponible :
 ## Statistiques
 
 L'extension affiche le temps "gagné" (temps que vous n'avez pas attendu manuellement) dans le popup. Ce temps correspond au cumul des countdowns de 30 secondes.
+
+## Nettoyage Automatique
+
+L'extension nettoie automatiquement les anciennes données :
+
+| Donnée | Délai |
+|--------|-------|
+| Torrents terminés | Supprimés après 1 heure |
+| Torrents annulés | Supprimés après 1 heure |
+| Torrents retirés manuellement | Mémorisés 7 jours (pas de ré-ajout automatique) |
+
+Cela garde votre popup propre sans intervention.
 
 ## Confidentialité
 

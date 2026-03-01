@@ -14,13 +14,14 @@ Une extension web optimisée pour YggTorrent qui gère intelligemment le temps d
 
 - **Pipeline Automatique** : Visitez des pages de torrents, ils sont automatiquement mis en file d'attente et téléchargés séquentiellement. Aucun clic nécessaire après la visite.
 - **File d'attente Persistante** : Les torrents en attente survivent au redémarrage du navigateur et du Service Worker grâce au stockage `chrome.storage`.
-- **6 États Visuels** :
+- **7 États Visuels** :
   - **En file** : En attente de traitement
   - **Token** : Demande du jeton au serveur
-  - **Countdown** : Timer de 30 secondes en cours
-  - **Téléchargement** : Download automatique lancé
+  - **Countdown** : Compte à rebours de 30 secondes
+  - **Téléchargement** : Téléchargement automatique en cours
   - **Terminé** : Fichier téléchargé avec succès
-  - **Erreur** : Avec retry automatique ou manuel
+  - **Annulé** : Téléchargement annulé par l'utilisateur
+  - **Erreur** : Échec (retry automatique ou manuel)
 - **Gestion du Rate-Limit** : Détection automatique des erreurs 429 et "fichier indisponible", avec backoff exponentiel et retry.
 - **Onglet Caché Fallback** : Si aucun onglet YggTorrent n'est ouvert, un onglet temporaire est créé en arrière-plan pour obtenir le token.
 - **Navigation Libre** : Grâce au Service Worker et aux alarmes Chrome, le pipeline continue même si vous fermez les onglets.
@@ -127,6 +128,10 @@ Utilisez la fonctionnalité **"Domaine personnalisé"** dans le popup pour ajout
 ### Les torrents restent en file d'attente
 
 Vérifiez que vous êtes connecté à votre compte YggTorrent. Certains torrents nécessitent une authentification.
+
+### J'ai annulé un téléchargement par erreur
+
+Les téléchargements annulés apparaissent avec le statut "Annulé". Cliquez sur "Réessayer" dans le popup pour le relancer. Il sera traité en priorité (en tête de file).
 
 ### Comment voir les logs ?
 
