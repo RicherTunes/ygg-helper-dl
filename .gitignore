@@ -1,3 +1,8 @@
 key.pem
 *.crx
 *.zip
+
+# Screenshot script artifacts
+screenshots/node_modules/
+screenshots/output/
+screenshots/package-lock.json
