@@ -95,12 +95,33 @@ popup.js + popup.html (Popup UI)   ← Pipeline dashboard
 
 All stored in `chrome.storage.local`:
 - `ygg_queue` — Ordered array of torrent IDs (pipeline processing order)
-- `ygg_timers` — Map of torrent data keyed by ID: `{ status, name, origin, enqueuedAt, statusSince, token, countdownEndsAt, retryCount, nextRetryAt, lastError, errorType, downloadId, completedAt }`
-- `ygg_pipeline_state` — Pipeline-wide state: `{ nextProcessAt, rateLimitCount, rateLimitUntil }`
+- `ygg_timers` — Map of torrent data keyed by ID (see Timer Properties below)
+- `ygg_pipeline_state` — Pipeline-wide state: `{ nextProcessAt, rateLimitCount, rateLimitUntil, consecutiveFailures }`
 - `ygg_pipeline_lock` — Lease-based lock: `{ lockUntil, lockOwner }`
 - `ygg_stats_wasted` — Total seconds (integer) of accumulated wait time
 - `ygg_update_available` — `{ version, url }` when a newer version exists on GitHub
 - `ygg_custom_domain` — User-configured domain string
+- `ygg_dismissed` — Map of dismissed torrent IDs with timestamps (7-day TTL): `{ [torrentId]: dismissedAt }`
+
+### Timer Properties
+
+Each timer in `ygg_timers` contains:
+- `status` — Current state: `queued`, `requesting`, `counting`, `downloading`, `done`, `error`
+- `name` — Torrent display name
+- `origin` — Base URL (e.g., `https://yggtorrent.org`)
+- `enqueuedAt` — Timestamp when added to queue
+- `statusSince` — Timestamp of last status change
+- `token` — Download token from YggTorrent API
+- `tokenRequestedAt` — When token request was initiated
+- `tokenIssuedAt` — When token was received
+- `requestNonce` — Unique ID for request deduplication
+- `countdownEndsAt` — When the 30s countdown finishes
+- `retryCount` — Number of retry attempts (max 5)
+- `nextRetryAt` — When to retry after error
+- `lastError` — Error message string
+- `errorType` — Classified error: `rate_limit`, `auth`, `not_found`, `network`
+- `downloadId` — Chrome download ID
+- `completedAt` — When download finished
 
 ## Timer Status Machine
 

@@ -114,6 +114,9 @@ erDiagram
         number enqueuedAt "Timestamp when added"
         number statusSince "Timestamp of last status change"
         string token "Download token from API"
+        number tokenRequestedAt "When token request started"
+        number tokenIssuedAt "When token was received"
+        string requestNonce "Unique ID for deduplication"
         number countdownEndsAt "When countdown finishes"
         number retryCount "Number of retry attempts"
         number nextRetryAt "When to retry next"
@@ -127,11 +130,16 @@ erDiagram
         number nextProcessAt "When pipeline can process next"
         number rateLimitCount "Consecutive rate limits"
         number rateLimitUntil "Rate limit cooldown ends"
+        number consecutiveFailures "Unknown error counter"
     }
 
     ygg_pipeline_lock {
         number lockUntil "Lock expiration timestamp"
         string lockOwner "Random ID of lock holder"
+    }
+
+    ygg_dismissed {
+        number dismissedAt "When user dismissed (7-day TTL)"
     }
 ```
 
