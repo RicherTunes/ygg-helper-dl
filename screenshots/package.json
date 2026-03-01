@@ -1,0 +1,13 @@
+{
+  "name": "ygg-helper-screenshots",
+  "version": "1.0.0",
+  "description": "Screenshot capture scripts for YggTorrent Helper extension",
+  "scripts": {
+    "capture": "node capture-screenshots.js",
+    "take": "node take-screenshots.js",
+    "update-readme": "node take-screenshots.js"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}
