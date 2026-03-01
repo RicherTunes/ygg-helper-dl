@@ -1,316 +1,406 @@
 // content.js
-// Timer Manager pour YggTorrent (v1.3 - Manual Trigger)
-// Gestion manuelle si un timer est déjà en cours
+// YggTorrent Helper v1.3.2 — Thin Sensor + Token Service
+// Détecte les torrents, enqueue au pipeline, affiche l'état
 
 const YggTimerManager = {
-    timerSeconds: 30,
     storageKey: 'ygg_timers',
+    queueKey: 'ygg_queue',
     ui: null,
     torrentId: null,
+    countdownInterval: null,
 
     init: async function() {
         this.torrentId = this.getTorrentId();
-        
+
         if (this.torrentId) {
             console.log(`[YggHelper] Torrent ID trouvé: ${this.torrentId}`);
-            this.handleTorrentPage(this.torrentId);
+            this.setupUI();
+            this.enqueue();
+            this.listenForMessages();
+            this.listenForStorageChanges();
         } else {
             console.log("[YggHelper] Aucun ID de torrent trouvé sur cette page.");
+            // Écouter quand même PING et REQUEST_TOKEN pour les onglets cachés
+            this.listenForMessages();
         }
     },
 
+    // --- Détection du torrent ---
     getTorrentId: function() {
-        // 1. Priorité: Bouton de téléchargement officiel (caché ou visible)
         const downloadBtn = document.getElementById('download-timer-btn');
         if (downloadBtn && downloadBtn.dataset.torrentId) return downloadBtn.dataset.torrentId;
 
-        // 2. Fallback: Formulaire de signalement
         const reportInput = document.querySelector('form#report-torrent input[name="target"]');
         if (reportInput && reportInput.value) return reportInput.value;
 
-        // 3. Fallback: URL
         const match = window.location.href.match(/\/(\d+)-/);
         if (match && match[1]) return match[1];
 
         return null;
     },
 
-    handleTorrentPage: async function(torrentId) {
-        this.ui = this.createUI();
-        document.body.appendChild(this.ui.container);
-
-        // Ecoute des messages du Background/Popup (ex: Force Start)
-        chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-            if (request.action === "TRIGGER_START") {
-                console.log("[YggHelper] Démarrage forcé reçu !");
-                this.startActivePhase();
-            }
-        });
-
-        // Vérifier si on a déjà un token valide en mémoire (rechargement de page)
-        const storedData = await this.getStoredTimer(torrentId);
-        
-        if (storedData && storedData.token) {
-            // Reprise d'un timer existant (pas besoin de demander la permission)
-            this.startActivePhase();
-        } else {
-            // Nouveau timer : Demander au background si la voie est libre
-            chrome.runtime.sendMessage({ action: "CAN_I_START" }, (response) => {
-                if (response && response.canStart) {
-                    // Voie libre -> Démarrage auto
-                    this.startActivePhase();
-                } else {
-                    // Voie occupée -> Mode manuel
-                    this.showManualStartButton();
-                    // Enregistrer en "Pending" pour le popup
-                    this.registerPendingStatus();
-                }
-            });
-        }
-    },
-
-    registerPendingStatus: function() {
-        const name = this.getTorrentName();
-        chrome.runtime.sendMessage({ 
-            action: "REGISTER_PENDING", 
-            torrentId: this.torrentId,
-            name: name
-        });
-    },
-
     getTorrentName: function() {
-        let torrentName = "Torrent";
-        // 1. Selecteur fiable (Modal de signalement)
         const reportName = document.querySelector('form#report-torrent strong');
         if (reportName) return reportName.innerText.trim();
-        
-        // 2. Fallback: Titre H1 (souvent absent maintenant)
+
         const h1 = document.querySelector('div.panel-heading h1');
         if (h1) return h1.innerText.trim();
 
-        return torrentName;
+        return "Torrent";
     },
 
-    showManualStartButton: function() {
-        this.ui.btn.innerText = "▶️ Lancer le Timer";
-        this.ui.btn.style.backgroundColor = '#8e44ad'; // Violet
-        this.ui.btn.style.cursor = 'pointer';
-        this.ui.btn.title = "Un autre téléchargement est en cours. Cliquez pour démarrer celui-ci.";
-        
-        this.ui.btn.onclick = (e) => {
-            e.preventDefault();
-            // Au clic, on force le démarrage (l'utilisateur prend la responsabilité)
-            // On signale au background qu'on prend la main
-            this.startActivePhase();
-        };
-    },
-
-    startActivePhase: async function() {
-        // Signaler qu'on démarre (verrouillage global)
-        chrome.runtime.sendMessage({ action: "TIMER_STARTED" });
-
-        const storedData = await this.getStoredTimer(this.torrentId);
-        const now = Date.now();
-
-        if (storedData && storedData.token) {
-            const elapsed = (now - storedData.startTime) / 1000;
-            if (elapsed >= this.timerSeconds) {
-                this.updateUIReady(this.torrentId, storedData.token);
-            } else {
-                this.startCountdown(this.torrentId, storedData.token, this.timerSeconds - elapsed);
-            }
-        } else {
-            this.startNewServerTimer(this.torrentId);
-        }
-    },
-
-    startNewServerTimer: function(torrentId) {
-        // Simulation du clic sur le vrai bouton pour générer le token via le site
-        const realBtn = document.getElementById('download-timer-btn');
-        
-        if (realBtn) {
-            // Méthode hybride : on clique virtuellement pour activer la logique du site, 
-            // mais on intercepte la réponse via fetch pour plus de stabilité si possible,
-            // ou on utilise l'API directe si le clic est trop complexe à intercepter.
-            
-            // Pour l'instant, on garde l'appel fetch direct qui fonctionnait, 
-            // car simuler le clic implique de gérer les popups du site.
-            // Si le fetch retourne 400, c'est souvent un souci de headers/cookies, 
-            // mais ici on est dans le contexte de la page.
-            
-            this.ui.btn.innerText = "⏳ Initialisation...";
-            
-            fetch('/engine/start_download_timer', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: `torrent_id=${torrentId}`
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (!data.token) throw new Error("Token manquant");
-                
-                // LOG DEMANDÉ PAR L'UTILISATEUR
-                const debugName = this.getTorrentName();
-                console.log(`[YggHelper] Token trouvé pour "${debugName}":`, data.token);
-
-                this.saveTimer(torrentId, data.token);
-                this.startCountdown(torrentId, data.token, this.timerSeconds);
-            })
-            .catch(err => {
-                console.error("[YggHelper] Erreur serveur:", err);
-                this.ui.btn.innerText = "❌ Erreur (Clic manuel requis)";
-                this.ui.btn.style.backgroundColor = '#c0392b';
-                // Fallback: Si l'API échoue, on dit à l'utilisateur de cliquer sur le vrai bouton
-                // Mais on reste propre.
-                chrome.runtime.sendMessage({ action: "TIMER_CANCELLED" });
-            });
-        } else {
-            // Pas de bouton trouvé, on tente quand même l'API
-             this.startNewServerTimerFallback(torrentId);
-        }
-    },
-    
-    startNewServerTimerFallback: function(torrentId) {
-         fetch('/engine/start_download_timer', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: `torrent_id=${torrentId}`
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (!data.token) throw new Error("Token manquant");
-                this.saveTimer(torrentId, data.token);
-                this.startCountdown(torrentId, data.token, this.timerSeconds);
-            })
-            .catch(err => {
-                chrome.runtime.sendMessage({ action: "TIMER_CANCELLED" });
-            });
-    },
-
-    startCountdown: function(torrentId, token, secondsLeft) {
-        let remaining = secondsLeft;
-        this.updateUITimer(remaining);
-
-        const interval = setInterval(() => {
-            remaining--;
-            this.updateUITimer(remaining);
-
-            if (remaining <= 0) {
-                clearInterval(interval);
-                this.updateUIReady(torrentId, token);
-            }
-        }, 1000);
-    },
-
-    updateUITimer: function(seconds) {
-        if (seconds > 0) {
-            this.ui.btn.innerText = `⏳ Patientez ${Math.ceil(seconds)}s...`;
-            this.ui.btn.style.backgroundColor = '#3498db'; // Bleu
-            this.ui.btn.style.cursor = 'wait';
-            this.ui.btn.onclick = null; // Désactiver le clic pendant le compte à rebours
-        }
-    },
-
-    updateUIReady: function(torrentId, token) {
-        // Timer fini, on libère le verrou global pour que d'autres puissent lancer leur timer
-        chrome.runtime.sendMessage({ action: "TIMER_FINISHED" });
-
-        this.ui.btn.innerText = "📥 Télécharger";
-        this.ui.btn.style.backgroundColor = '#27ae60'; // Vert
-        this.ui.btn.style.cursor = 'pointer';
-        this.ui.btn.style.pointerEvents = 'auto';
-        this.ui.btn.classList.add('ready');
-        
-        this.ui.btn.onclick = (e) => {
-            e.preventDefault();
-            this.triggerDownload(torrentId, token);
-        };
-    },
-
-    triggerDownload: function(torrentId, token) {
-        this.ui.btn.innerText = "🚀 Lancement...";
-        
-        // Récupération du nom
-        const torrentName = this.getTorrentName();
-
-        // Ajout des stats "Temps perdu"
-        chrome.runtime.sendMessage({ action: "ADD_WASTED_TIME" });
-
-        const finalName = torrentName.endsWith('.torrent') ? torrentName : torrentName + '.torrent';
+    // --- Enqueue au pipeline ---
+    enqueue: function() {
+        const name = this.getTorrentName();
+        const origin = window.location.origin;
 
         chrome.runtime.sendMessage({
-            action: "SCHEDULE_DOWNLOAD",
-            url: `${window.location.origin}/engine/download_torrent?id=${torrentId}&token=${token}`,
-            filename: finalName
-        });
+            action: 'ENQUEUE',
+            torrentId: this.torrentId,
+            name: name,
+            origin: origin
+        }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.error('[YggHelper] Erreur enqueue:', chrome.runtime.lastError.message);
+                this.updateUIForStatus('error', { lastError: 'Impossible de contacter le service worker' });
+                return;
+            }
 
-        setTimeout(() => { 
-            this.ui.btn.innerText = "✅ Lancé"; 
-            this.ui.btn.style.backgroundColor = '#7f8c8d';
-            this.ui.btn.onclick = null;
-        }, 1000);
+            if (response) {
+                console.log(`[YggHelper] Enqueue réponse: status=${response.status}, position=${response.position}`);
+                this.updateUIForStatus(response.status, {
+                    position: response.position,
+                    countdownEndsAt: response.countdownEndsAt
+                });
+            }
+        });
     },
 
-    // --- Stockage ---
-    getStoredTimer: function(torrentId) {
-        return new Promise((resolve) => {
-            chrome.storage.local.get([this.storageKey], (result) => {
-                const timers = result[this.storageKey] || {};
-                resolve(timers[torrentId]);
+    // --- Écoute des messages du background ---
+    listenForMessages: function() {
+        chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+            // Ping pour vérifier que le content script est prêt
+            if (request.action === 'PING') {
+                sendResponse({ pong: true });
+                return;
+            }
+
+            // Demande de token du pipeline
+            if (request.action === 'REQUEST_TOKEN') {
+                this.fetchToken(request.torrentId).then(result => {
+                    sendResponse(result);
+                }).catch(err => {
+                    sendResponse({ success: false, error: err.message });
+                });
+                return true; // Async
+            }
+        });
+    },
+
+    // --- Écoute des changements de storage ---
+    listenForStorageChanges: function() {
+        chrome.storage.onChanged.addListener((changes, namespace) => {
+            if (namespace !== 'local') return;
+            if (!this.torrentId) return;
+
+            // Recalculer sur changement de timers OU de queue (pour la position)
+            if (changes[this.storageKey] || changes[this.queueKey]) {
+                chrome.storage.local.get([this.storageKey, this.queueKey], (result) => {
+                    const timers = result[this.storageKey] || {};
+                    const queue = result[this.queueKey] || [];
+                    const timer = timers[this.torrentId];
+
+                    if (timer) {
+                        // Enrichir avec la position dans la queue
+                        const position = queue.indexOf(this.torrentId) + 1;
+                        this.updateUIForStatus(timer.status, { ...timer, position });
+                    }
+                });
+            }
+        });
+    },
+
+    // --- Token fetch (service pour le pipeline) ---
+    fetchToken: async function(torrentId) {
+        try {
+            console.log(`[YggHelper] Fetch token pour ${torrentId}...`);
+
+            const response = await fetch('/engine/start_download_timer', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: `torrent_id=${torrentId}`
             });
-        });
-    },
 
-    saveTimer: function(torrentId, token) {
-        const torrentName = this.getTorrentName();
+            // Détecter les redirections vers la page de login
+            if (response.redirected && response.url && response.url.includes('login')) {
+                return {
+                    success: false,
+                    error: 'Redirection vers la page de connexion',
+                    httpStatus: 403
+                };
+            }
 
-        chrome.storage.local.get([this.storageKey], (result) => {
-            const timers = result[this.storageKey] || {};
-            timers[torrentId] = {
-                token: token,
-                startTime: Date.now(),
-                name: torrentName,
-                origin: window.location.origin
+            // Vérifier le content-type avant de tenter le parse
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('text/html')) {
+                const bodyPreview = await response.text();
+                // Vérifier si c'est une page de login
+                if (bodyPreview.includes('login') || bodyPreview.includes('connexion')) {
+                    return {
+                        success: false,
+                        error: 'Page de connexion retournée au lieu du token',
+                        httpStatus: 403,
+                        responseBody: bodyPreview.slice(0, 500)
+                    };
+                }
+                return {
+                    success: false,
+                    error: 'Réponse HTML au lieu de JSON (probable redirection ou erreur serveur)',
+                    httpStatus: response.status,
+                    responseBody: bodyPreview.slice(0, 500)
+                };
+            }
+
+            // Lire le body en texte d'abord pour pouvoir l'inspecter
+            const bodyText = await response.text();
+
+            if (!response.ok) {
+                return {
+                    success: false,
+                    error: `HTTP ${response.status}`,
+                    httpStatus: response.status,
+                    responseBody: bodyText.slice(0, 500)
+                };
+            }
+
+            // Tenter le parse JSON
+            let data;
+            try {
+                data = JSON.parse(bodyText);
+            } catch (parseErr) {
+                return {
+                    success: false,
+                    error: `Réponse invalide: ${bodyText.slice(0, 200)}`,
+                    httpStatus: response.status,
+                    responseBody: bodyText.slice(0, 500)
+                };
+            }
+
+            if (!data.token) {
+                return {
+                    success: false,
+                    error: "Token manquant dans la réponse",
+                    httpStatus: response.status,
+                    responseBody: bodyText.slice(0, 500)
+                };
+            }
+
+            console.log(`[YggHelper] Token obtenu pour ${torrentId}`);
+            return {
+                success: true,
+                token: data.token
             };
-            chrome.storage.local.set({ [this.storageKey]: timers });
-        });
+
+        } catch (err) {
+            console.error('[YggHelper] Erreur fetch token:', err);
+            return {
+                success: false,
+                error: err.message
+            };
+        }
     },
 
-    // --- UI ---
+    // --- UI: Mise à jour basée sur le statut ---
+    updateUIForStatus: function(status, data) {
+        if (!this.ui) return;
+
+        // Nettoyer le countdown local si on change d'état
+        if (status !== 'counting' && this.countdownInterval) {
+            clearInterval(this.countdownInterval);
+            this.countdownInterval = null;
+        }
+
+        switch (status) {
+            case 'queued':
+                this.showQueued(data.position || 0, data.errorType);
+                break;
+            case 'requesting':
+                this.showRequesting();
+                break;
+            case 'counting':
+                this.showCounting(data.countdownEndsAt);
+                break;
+            case 'downloading':
+                this.showDownloading();
+                break;
+            case 'done':
+                this.showDone();
+                break;
+            case 'error':
+                this.showError(data.lastError, data.errorType);
+                break;
+            default:
+                this.showQueued(0);
+        }
+    },
+
+    showQueued: function(position, errorType) {
+        if (errorType === 'rate_limit') {
+            this.ui.btn.innerText = '⏳ Rate-limit, retry auto...';
+            this.ui.btn.style.backgroundColor = '#f59e0b';
+            this.ui.container.querySelector('.ygg-left-bar').style.background =
+                'linear-gradient(to bottom, #f59e0b, #d97706)';
+        } else {
+            const posText = position > 0 ? ` (#${position})` : '';
+            this.ui.btn.innerText = `⏳ En file d'attente${posText}`;
+            this.ui.btn.style.backgroundColor = '#8b5cf6';
+            this.ui.container.querySelector('.ygg-left-bar').style.background =
+                'linear-gradient(to bottom, #8b5cf6, #7c3aed)';
+        }
+        this.ui.btn.style.cursor = 'default';
+        this.ui.btn.onclick = null;
+    },
+
+    showRequesting: function() {
+        this.ui.btn.innerText = '🔄 Demande du token...';
+        this.ui.btn.style.backgroundColor = '#f59e0b';
+        this.ui.btn.style.cursor = 'wait';
+        this.ui.btn.onclick = null;
+        this.ui.container.querySelector('.ygg-left-bar').style.background =
+            'linear-gradient(to bottom, #f59e0b, #d97706)';
+    },
+
+    showCounting: function(countdownEndsAt) {
+        if (!countdownEndsAt) return;
+
+        // Countdown local — pas besoin de poller le storage
+        const updateDisplay = () => {
+            const remaining = Math.max(0, Math.ceil((countdownEndsAt - Date.now()) / 1000));
+            if (remaining <= 0) {
+                this.ui.btn.innerText = '📥 Téléchargement imminent...';
+                this.ui.btn.style.backgroundColor = '#10b981';
+                if (this.countdownInterval) {
+                    clearInterval(this.countdownInterval);
+                    this.countdownInterval = null;
+                }
+            } else {
+                this.ui.btn.innerText = `⏳ ${remaining}s restantes...`;
+                this.ui.btn.style.backgroundColor = '#3b82f6';
+            }
+        };
+
+        this.ui.btn.style.cursor = 'wait';
+        this.ui.btn.onclick = null;
+        this.ui.container.querySelector('.ygg-left-bar').style.background =
+            'linear-gradient(to bottom, #3b82f6, #2563eb)';
+
+        // Lancer le countdown local
+        if (this.countdownInterval) clearInterval(this.countdownInterval);
+        updateDisplay();
+        this.countdownInterval = setInterval(updateDisplay, 1000);
+    },
+
+    showDownloading: function() {
+        this.ui.btn.innerText = '🚀 Téléchargement en cours...';
+        this.ui.btn.style.backgroundColor = '#10b981';
+        this.ui.btn.style.cursor = 'default';
+        this.ui.btn.onclick = null;
+        this.ui.container.querySelector('.ygg-left-bar').style.background =
+            'linear-gradient(to bottom, #10b981, #059669)';
+    },
+
+    showDone: function() {
+        this.ui.btn.innerText = '✅ Téléchargé !';
+        this.ui.btn.style.backgroundColor = '#6b7280';
+        this.ui.btn.style.cursor = 'default';
+        this.ui.btn.onclick = null;
+        this.ui.container.querySelector('.ygg-left-bar').style.background =
+            'linear-gradient(to bottom, #6b7280, #4b5563)';
+
+        // Fade out après 5s
+        setTimeout(() => {
+            if (this.ui && this.ui.container) {
+                this.ui.container.style.transition = 'opacity 0.5s, transform 0.5s';
+                this.ui.container.style.opacity = '0';
+                this.ui.container.style.transform = 'translateY(20px)';
+                setTimeout(() => {
+                    if (this.ui && this.ui.container) {
+                        this.ui.container.remove();
+                    }
+                }, 500);
+            }
+        }, 5000);
+    },
+
+    showError: function(errorMessage, errorType) {
+        let displayMsg = '❌ Erreur';
+        if (errorType === 'rate_limit') {
+            displayMsg = '⏳ Trop de requêtes, retry auto...';
+            this.ui.btn.style.backgroundColor = '#f59e0b';
+        } else if (errorType === 'auth') {
+            displayMsg = '🔒 Connexion requise';
+            this.ui.btn.style.backgroundColor = '#ef4444';
+        } else if (errorType === 'not_found') {
+            displayMsg = '❌ Torrent introuvable';
+            this.ui.btn.style.backgroundColor = '#ef4444';
+        } else {
+            displayMsg = `❌ Erreur: ${errorMessage || 'inconnue'}`;
+            this.ui.btn.style.backgroundColor = '#ef4444';
+        }
+
+        this.ui.btn.innerText = displayMsg;
+        this.ui.btn.style.cursor = 'default';
+        this.ui.btn.onclick = null;
+        this.ui.container.querySelector('.ygg-left-bar').style.background =
+            'linear-gradient(to bottom, #ef4444, #dc2626)';
+    },
+
+    // --- UI: Création du widget ---
+    setupUI: function() {
+        this.ui = this.createUI();
+        document.body.appendChild(this.ui.container);
+    },
+
     createUI: function() {
         const container = document.createElement('div');
         container.id = 'ygg-helper-reminder';
-        
+
+        // Barre latérale colorée (remplace le pseudo-element pour pouvoir la changer dynamiquement)
+        const leftBar = document.createElement('div');
+        leftBar.className = 'ygg-left-bar';
+        leftBar.style.cssText = 'position:absolute;left:0;top:0;bottom:0;width:4px;background:linear-gradient(to bottom,#8b5cf6,#7c3aed);border-radius:12px 0 0 12px;';
+
         const contentWrapper = document.createElement('div');
         contentWrapper.className = 'ygg-content-wrapper';
 
         const title = document.createElement('div');
         title.className = 'ygg-title';
         title.innerHTML = '<span>⚡</span> Helper';
-        
+
         const btn = document.createElement('a');
         btn.href = "#";
         btn.className = 'ygg-download-btn';
-        btn.innerText = 'Connexion...';
-        
+        btn.innerText = '⏳ Connexion...';
+        btn.onclick = (e) => e.preventDefault();
+
         const close = document.createElement('div');
         close.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
         close.className = 'ygg-close-btn';
         close.onclick = () => {
             container.remove();
-            // Si on ferme, on libère potentiellement un verrou si on était en cours
-            chrome.runtime.sendMessage({ action: "TIMER_CANCELLED" });
+            // Annuler le timer dans le pipeline
+            if (this.torrentId) {
+                chrome.runtime.sendMessage({ action: 'REMOVE_TIMER', torrentId: this.torrentId });
+            }
         };
 
         contentWrapper.appendChild(title);
         contentWrapper.appendChild(btn);
-        
+
+        container.appendChild(leftBar);
         container.appendChild(contentWrapper);
         container.appendChild(close);
 

@@ -21,15 +21,7 @@
   min-width: 300px;
 }
 
-#ygg-helper-reminder::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  background: linear-gradient(to bottom, #2ecc71, #27ae60);
-}
+/* La barre latérale est maintenant un élément DOM .ygg-left-bar pour le changement dynamique de couleur */
 
 .ygg-content-wrapper {
   display: flex;

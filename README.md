@@ -1,25 +1,45 @@
 # ⚡ YggTorrent Helper (Smart Timer)
 
-![Version](https://img.shields.io/badge/version-1.4-blue.svg)
+![Version](https://img.shields.io/badge/version-1.3.2-blue.svg)
 ![Compatibility](https://img.shields.io/badge/browser-Chrome%20%7C%20Brave%20%7C%20Opera%20%7C%20Edge-red.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-Une extension web optimisée pour YggTorrent qui gère intelligemment le temps d'attente de téléchargement pour vous permettre de naviguer librement. Plus besoin d'attendre 30 secondes devant votre écran !
+> Fork de [MoowGlax/ygg-helper-dl](https://github.com/MoowGlax/ygg-helper-dl) — merci à MoowGlax pour le projet original !
+
+Une extension web optimisée pour YggTorrent qui gère intelligemment le temps d'attente de téléchargement. Ouvrez vos pages de torrent, tout le reste est automatique — file d'attente, countdown, téléchargement. Zero friction.
 
 ![Interface Principale](images/page_principal.png)
 
 ## 🚀 Fonctionnalités
 
-- **Smart Timer** : Lance automatiquement le compte à rebours de 30s côté serveur dès que vous arrivez sur la fiche d'un torrent.
-- **File d'attente Intelligente** :
-  - **Actifs** : Les téléchargements en cours de traitement.
-  - **En attente** : Si vous ouvrez plusieurs onglets, les suivants sont mis en attente pour ne pas bloquer le système (un seul timer à la fois).
-  - **Démarrage Manuel** : Lancez les téléchargements en attente d'un simple clic quand le précédent est fini.
-- **Navigation Libre** : Grâce au Service Worker, le timer continue même si vous fermez l'onglet ou naviguez ailleurs.
-- **Mises à jour Automatiques** : Système de notification intégré pour vous avertir des nouvelles versions disponibles sur GitHub.
-- **Multi-Domaines** : Supporte tous les domaines YggTorrent connus (`.org`, `.wtf`, `.support`, `.top`, `.town`, etc.) avec possibilité d'ajouter un domaine personnalisé depuis le popup.
+- **Pipeline Automatique** : Visitez des pages de torrents, ils sont automatiquement mis en file d'attente et téléchargés séquentiellement. Aucun clic nécessaire après la visite.
+- **File d'attente Persistante** : Les torrents en attente survivent au redémarrage du navigateur et du Service Worker grâce au stockage `chrome.storage`.
+- **6 États Visuels** :
+  - **En file** : En attente de traitement
+  - **Token** : Demande du jeton au serveur
+  - **Countdown** : Timer de 30 secondes en cours
+  - **Téléchargement** : Download automatique lancé
+  - **Terminé** : Fichier téléchargé avec succès
+  - **Erreur** : Avec retry automatique ou manuel
+- **Gestion du Rate-Limit** : Détection automatique des erreurs 429 et "fichier indisponible", avec backoff exponentiel et retry.
+- **Onglet Caché Fallback** : Si aucun onglet YggTorrent n'est ouvert, un onglet temporaire est créé en arrière-plan pour obtenir le token.
+- **Navigation Libre** : Grâce au Service Worker et aux alarmes Chrome, le pipeline continue même si vous fermez les onglets.
+- **Multi-Domaines** : Supporte tous les domaines YggTorrent connus + possibilité d'ajouter un domaine personnalisé.
+- **Mises à jour Automatiques** : Notification intégrée pour les nouvelles versions.
 
 ![Notification de Mise à jour](images/update_notif.png)
+
+## 🔄 Différences avec le projet original
+
+| Fonctionnalité | MoowGlax (original) | RicherTunes (ce fork) |
+|---|---|---|
+| File d'attente | Manuelle (clic requis) | Automatique (pipeline) |
+| Téléchargement | Clic "Télécharger" requis | Auto-download après countdown |
+| Rate-limiting | Aucune gestion | Backoff exponentiel + retry |
+| Service Worker restart | Perte de l'état | Récupération automatique |
+| Domaines | Un seul | 24 + domaine personnalisé |
+| Timer | setInterval (fragile) | chrome.alarms (fiable MV3) |
+| Navigateurs | Chrome | Chrome, Brave, Opera, Edge |
 
 ## 📦 Installation
 
@@ -62,11 +82,10 @@ Cette extension n'est pas disponible sur le Chrome Web Store. Vous avez deux opt
 ## 🛠️ Utilisation
 
 1. Naviguez sur YggTorrent comme d'habitude.
-2. Ouvrez la fiche d'un torrent.
-3. Une notification discrète "⚡ Helper" apparaît en bas à droite pour confirmer la prise en charge.
-4. Le timer démarre en arrière-plan. Vous pouvez continuer à naviguer !
-5. Ouvrez l'extension (clic sur l'icône ⚡) pour voir l'état de vos téléchargements.
-6. Une fois le timer terminé, cliquez sur "Télécharger" pour lancer le téléchargement.
+2. Ouvrez la fiche d'un torrent — le widget "⚡ Helper" apparaît et l'enqueue automatiquement.
+3. Continuez à ouvrir d'autres torrents, ils s'ajoutent à la file d'attente.
+4. Ouvrez le popup (clic sur l'icône ⚡) pour suivre la progression du pipeline.
+5. Les fichiers se téléchargent automatiquement, un par un, avec un délai de sécurité entre chaque.
 
 ### 🌐 Domaine personnalisé
 
@@ -87,6 +106,11 @@ Un script PowerShell est fourni pour générer un fichier `.crx` :
 ```
 
 La clé de signature (`ygg-helper-dl-key.pem`) est générée automatiquement au premier build et stockée dans le dossier parent. Ne la partagez pas.
+
+## 🙏 Crédits
+
+- **[MoowGlax](https://github.com/MoowGlax)** — Auteur original de ygg-helper-dl
+- **[RicherTunes](https://github.com/RicherTunes)** — Mainteneur de ce fork
 
 ## 🤝 Contribution
 

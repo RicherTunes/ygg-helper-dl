@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-YggTorrent Helper (Smart Timer) is a **Chrome/Brave/Opera Manifest V3 browser extension** that manages the 30-second download wait timer on YggTorrent in the background, letting users browse freely. Written in vanilla JavaScript with no dependencies.
+YggTorrent Helper (Smart Timer) is a **Chrome/Brave/Opera Manifest V3 browser extension** that automatically manages the 30-second download wait timer on YggTorrent. Users visit torrent pages, and everything queues and downloads automatically — zero friction.
+
+Written in vanilla JavaScript with no dependencies.
 
 **Language**: All UI text, comments, and documentation are in **French**.
 
@@ -27,51 +29,49 @@ No package.json, no npm, no linting, no tests.
 Three-part Chrome Extension architecture communicating via `chrome.runtime.onMessage`:
 
 ```
-background.js (Service Worker)     ← Global coordinator
+background.js (Service Worker)     ← Pipeline orchestrator
     ↕ message passing
-content.js (Content Script)        ← Injected into YggTorrent pages
+content.js (Content Script)        ← Thin sensor + token service
     ↕ message passing
-popup.js + popup.html (Popup UI)   ← User dashboard
+popup.js + popup.html (Popup UI)   ← Pipeline dashboard
 ```
 
-### background.js — Global State & Coordination
-- **Global timer lock**: Only one timer can run at a time (`isTimerRunning` boolean)
-- Routes messages between content script and popup
-- Proxies downloads via `chrome.downloads` API
-- Tracks "wasted time" statistics
-- Checks for updates from GitHub every 24h
-- Cleans up stale timers (>1 hour old)
-- **Dynamic domain registration**: Registers content scripts for custom domains via `chrome.scripting.registerContentScripts()`
+### background.js — Pipeline Orchestrator (~500 lines)
+- **Persistent queue** in `chrome.storage.local` (`ygg_queue` array + `ygg_timers` map)
+- **`processQueue()`**: Idempotent, lease-locked pipeline processor. Picks the first queued item, requests a token, manages countdown via `chrome.alarms`, auto-triggers download, then cascades to next item with cooldown.
+- **Token acquisition**: Primary via `REQUEST_TOKEN` message to content script on matching tab. Fallback via single reusable hidden tab when no tabs are open.
+- **Error handling**: Classifies errors (rate_limit, auth, not_found, network) with per-type policies. Rate limits apply pipeline-wide backoff with jitter. Network errors use per-item exponential backoff (5s×2^n, max 5 retries).
+- **Recovery**: `recoverPipeline()` on `onStartup`/`onInstalled` scans stale states and restarts the pipeline from persisted timestamps.
+- **`chrome.alarms`** for all timers (countdown, process queue, update check, cleanup). No `setInterval`.
+- **`chrome.downloads.onChanged`** for download completion tracking.
+- Keeps: update checking, domain registration, wasted time stats.
 
-### content.js — Page Interaction
-- Singleton object `YggTimerManager` handles all page logic
-- Extracts torrent ID via 3-tier fallback: download button → report form → URL regex
-- Requests token from YggTorrent's `POST /engine/start_download_timer` endpoint
-- Manages 30-second countdown and injects a notification widget (bottom-right corner)
-- Timer state machine: connecting → initializing → counting down → ready → downloaded
-- Stores `origin` with timer data so popup can construct download URLs for any domain
+### content.js — Thin Sensor + Token Service (~200 lines)
+- Singleton `YggTimerManager` detects torrent ID and auto-enqueues via `ENQUEUE` message
+- Serves `REQUEST_TOKEN` requests from background (fetches token from YggTorrent API using page cookies)
+- Responds to `PING` for hidden tab readiness checks
+- Renders 6 status states via `chrome.storage.onChanged` listener
+- Local countdown rendering (receives `countdownEndsAt` once, renders locally with `setInterval`)
+- Keeps: `getTorrentId()` (3-tier fallback), `getTorrentName()`, `createUI()`
 
-### popup.js — Dashboard UI
-- Polls `chrome.storage.local` every 1 second to render timer cards
-- Separates timers into "active" (with token/countdown) and "pending" (queued)
-- Allows force-starting pending timers and triggering downloads
-- **Domain settings**: Collapsible panel to add custom YggTorrent domains
+### popup.js — Pipeline Dashboard
+- Uses `chrome.storage.onChanged` for instant status updates (1s polling only for countdown display)
+- Renders pipeline cards with phase badges for 6 states
+- Retry/Remove buttons for error items
+- Completed section showing download history
+- Keeps: domain settings, update check, wasted time stats
 
 ## Message Protocol
 
-Actions exchanged via `chrome.runtime.sendMessage`:
-
 | Action | Direction | Purpose |
 |---|---|---|
-| `CAN_I_START` | content → background | Check if timer slot is free |
-| `TIMER_STARTED` | content → background | Acquire global lock |
-| `TIMER_FINISHED` | content → background | Release global lock |
-| `TIMER_CANCELLED` | content → background | Release lock on error/close |
-| `REGISTER_PENDING` | content → background | Queue timer when slot occupied |
-| `FORCE_START` | popup → background → content | Trigger a pending timer |
-| `TRIGGER_START` | background → content | Signal content script to start |
-| `ADD_WASTED_TIME` | content/popup → background | Add 30s to stats |
-| `SCHEDULE_DOWNLOAD` | content/popup → background | Proxy download to Chrome API |
+| `ENQUEUE` | content → background | Add torrent to pipeline queue |
+| `REQUEST_TOKEN` | background → content | Ask content script to fetch token from API |
+| `TOKEN_RESULT` | content → background | Return token or error from fetch |
+| `PING` | background → content | Check if content script is ready (hidden tab) |
+| `RETRY_TIMER` | popup → background | Manual retry for errored timer |
+| `REMOVE_TIMER` | popup → background | Remove timer from queue |
+| `ADD_WASTED_TIME` | background (internal) | Add 30s to stats on token acquisition |
 | `SAVE_CUSTOM_DOMAIN` | popup → background | Register content scripts for new domain |
 | `GET_DOMAIN_CONFIG` | popup → background | Get current custom domain |
 | `REMOVE_CUSTOM_DOMAIN` | popup → background | Unregister custom domain scripts |
@@ -79,20 +79,36 @@ Actions exchanged via `chrome.runtime.sendMessage`:
 ## Storage Keys
 
 All stored in `chrome.storage.local`:
-- `ygg_timers` — Object keyed by torrent ID: `{ token, startTime, name, origin, status?, tabId? }`
+- `ygg_queue` — Ordered array of torrent IDs (pipeline processing order)
+- `ygg_timers` — Map of torrent data keyed by ID: `{ status, name, origin, enqueuedAt, statusSince, token, countdownEndsAt, retryCount, nextRetryAt, lastError, errorType, downloadId, completedAt }`
+- `ygg_pipeline_state` — Pipeline-wide state: `{ nextProcessAt, rateLimitCount, rateLimitUntil }`
+- `ygg_pipeline_lock` — Lease-based lock: `{ lockUntil, lockOwner }`
 - `ygg_stats_wasted` — Total seconds (integer) of accumulated wait time
 - `ygg_update_available` — `{ version, url }` when a newer version exists on GitHub
-- `ygg_custom_domain` — User-configured domain string (e.g., `yggtorrent.wtf`)
+- `ygg_custom_domain` — User-configured domain string
+
+## Timer Status Machine
+
+```
+queued → requesting → counting → downloading → done
+                  ↘        ↘          ↘
+                   error ←←←←←←←←←←←←
+                     ↓ (retry)
+                   queued
+```
+
+6 statuses: `queued`, `requesting`, `counting`, `downloading`, `done`, `error`
 
 ## Domain Support
 
 The manifest includes 24 known YggTorrent TLDs. When the site changes domain:
 1. If the new domain is already in the manifest, it works automatically
-2. If not, user can add it via the popup's "Domaine personnalisé" setting, which uses `chrome.scripting.registerContentScripts()` and `chrome.permissions.request()`
+2. If not, user can add it via the popup's "Domaine personnalisé" setting
 
 ## Conventions
 
-- Console logs use prefixes: `[YggHelper]`, `[Timer]`, `[Stats]`, `[Lock]`, `[Update]`, `[Pending]`, `[Domain]`
+- Console logs use prefixes: `[YggHelper]`, `[Pipeline]`, `[Stats]`, `[Update]`, `[Domain]`
 - Storage keys use `ygg_` prefix
 - Message actions are `UPPER_SNAKE_CASE`
+- Alarm names use `ygg_` prefix: `ygg_process_queue`, `ygg_countdown_${id}`, `ygg_update_check`, `ygg_cleanup`
 - Code uses camelCase for functions/variables, `UPPER_SNAKE_CASE` for constants

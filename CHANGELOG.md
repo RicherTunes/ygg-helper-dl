@@ -1,6 +1,33 @@
 # Changelog
 
-## [1.4] - 2026-03-01
+## [1.3.2] - 2026-03-01
+
+### Added
+- **Pipeline de téléchargement automatique** : Remplacement du système binaire lock/unlock par une file d'attente persistante. Les torrents sont automatiquement enchaînés sans intervention utilisateur.
+- **Auto-download** : Le téléchargement se lance automatiquement à la fin du countdown de 30s — plus besoin de cliquer "Télécharger".
+- **Gestion du rate-limit** : Détection des erreurs 429 et "file unavailable", avec backoff exponentiel global et retry automatique.
+- **Onglet caché fallback** : Si aucun onglet YggTorrent n'est ouvert, un onglet caché est créé temporairement pour obtenir le token.
+- **Récupération du pipeline** : En cas de redémarrage du Service Worker, le pipeline reprend depuis l'état persisté dans `chrome.storage`.
+- **6 états visuels** : `queued`, `requesting`, `counting`, `downloading`, `done`, `error` — avec badges et couleurs distinctes dans le popup et le widget.
+- **Section "Terminés"** dans le popup pour voir l'historique des téléchargements.
+- **Boutons Retry/Retirer** pour les torrents en erreur dans le popup.
+- **`chrome.alarms`** : Remplacement de tous les `setInterval` par des alarmes Chrome pour la fiabilité MV3.
+- **`chrome.downloads.onChanged`** : Suivi de la complétion des téléchargements via l'API native.
+- **Stockage amélioré** : Nouvelles clés `ygg_queue` (ordre de la file), `ygg_pipeline_state` (état global), `ygg_pipeline_lock` (verrou lease-based).
+
+### Changed
+- **content.js** : Restructuré en "thin sensor" — détecte les torrents, enqueue au pipeline, et affiche l'état. La logique d'orchestration est entièrement déplacée dans le background.
+- **background.js** : Réécrit comme orchestrateur de pipeline avec `processQueue()` idempotent, acquisition de token via tab ou onglet caché, et gestion d'erreurs classifiées.
+- **popup.js** : Utilise `chrome.storage.onChanged` au lieu du polling 1s pour les mises à jour de statut. Nouvelle UI avec cartes de pipeline montrant les 6 états.
+- **popup.html** : Section "En attente" renommée en "Pipeline", ajout de la section "Terminés".
+- **Version** : 1.3.1 → 1.3.2.
+
+### Removed
+- Verrou binaire `isTimerRunning` en mémoire (remplacé par file d'attente persistante).
+- Messages `CAN_I_START`, `TIMER_STARTED`, `TIMER_FINISHED`, `TIMER_CANCELLED`, `REGISTER_PENDING`, `FORCE_START`, `TRIGGER_START`, `SCHEDULE_DOWNLOAD` (remplacés par `ENQUEUE`, `REQUEST_TOKEN`, `TOKEN_RESULT`, `RETRY_TIMER`, `REMOVE_TIMER`).
+- Bouton "Démarrer" manuel dans le popup (tout est automatique).
+
+## [1.3.1] - 2026-03-01
 
 ### Fixed
 - **Extension non fonctionnelle sur Brave** : Les extensions installées via `.crx` sur Brave ne chargeaient pas les content scripts. Documentation mise à jour pour recommander "Load unpacked".
@@ -18,7 +45,7 @@
 
 ### Changed
 - **URLs GitHub** : Toutes les références mises à jour de `MoowGlax/ygg-helper-dl` vers `RicherTunes/ygg-helper-dl`.
-- **Version** : 1.3 → 1.4.
+- **Version** : 1.3 → 1.3.1.
 
 ## [1.3] - Version précédente
 

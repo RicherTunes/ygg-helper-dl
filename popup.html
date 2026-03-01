@@ -15,7 +15,7 @@
         <span class="badge" id="appVersion"></span>
       </div>
     </div>
-    <div class="credits-btn" id="creditsLink" title="Développé par MoowGlax">
+    <div class="credits-btn" id="creditsLink" title="Développé par RicherTunes (fork de MoowGlax)">
       ❤️
     </div>
   </header>
@@ -36,20 +36,21 @@
   </div>
 
   <main class="app-content">
+    <!-- File d'attente & Actifs -->
     <div class="section-title">
-      <span>Téléchargements Actifs</span>
-      <span class="count-badge" id="activeCount">0</span>
+      <span>Pipeline</span>
+      <span class="count-badge" id="pipelineCount">0</span>
+    </div>
+    <div id="pipelineList" class="timers-list">
+      <!-- Cartes injectées par popup.js -->
     </div>
 
-    <div id="timersList" class="timers-list">
-      <!-- Les cartes seront injectées ici par popup.js -->
+    <!-- Terminés -->
+    <div class="section-title" id="completedSectionTitle" style="display:none; margin-top: 15px;">
+      <span>Terminés</span>
+      <span class="count-badge" id="completedCount">0</span>
     </div>
-
-    <div class="section-title" id="pendingSectionTitle" style="display:none; margin-top: 15px;">
-      <span>En attente</span>
-      <span class="count-badge" id="pendingCount">0</span>
-    </div>
-    <div id="pendingList" class="timers-list"></div>
+    <div id="completedList" class="timers-list"></div>
   </main>
 
   <div class="settings-section">
