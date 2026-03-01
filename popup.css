@@ -144,6 +144,7 @@ body {
 .timer-card.status-counting { border-left: 4px solid var(--accent-blue); }
 .timer-card.status-downloading { border-left: 4px solid var(--accent-green); }
 .timer-card.status-done { border-left: 4px solid #6b7280; opacity: 0.7; }
+.timer-card.status-cancelled { border-left: 4px solid var(--accent-yellow); opacity: 0.7; }
 .timer-card.status-error { border-left: 4px solid var(--accent-red); }
 
 .timer-header {
@@ -193,6 +194,10 @@ body {
 .phase-badge.done {
   background-color: rgba(107, 114, 128, 0.15);
   color: #9ca3af;
+}
+.phase-badge.cancelled {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: var(--accent-yellow);
 }
 .phase-badge.error {
   background-color: rgba(239, 68, 68, 0.15);

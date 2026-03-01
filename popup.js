@@ -41,8 +41,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Tout nettoyer
     document.getElementById('cleanAllBtn').addEventListener('click', () => {
-        chrome.storage.local.remove([STORAGE_KEY, QUEUE_KEY], () => {
-            updatePipeline();
+        chrome.storage.local.get([STORAGE_KEY, QUEUE_KEY], (result) => {
+            const timers = result[STORAGE_KEY] || {};
+            const queue = result[QUEUE_KEY] || [];
+
+            const isActive = (status) =>
+                status === 'queued' || status === 'requesting' || status === 'counting' || status === 'downloading';
+
+            const keepTimers = {};
+            const keepQueue = [];
+
+            // Conserver l'ordre existant de la queue
+            for (const id of queue) {
+                const timer = timers[id];
+                if (!timer) continue;
+                if (!isActive(timer.status)) continue;
+                keepQueue.push(id);
+                keepTimers[id] = timer;
+            }
+
+            // Conserver les actifs même s'ils ne sont pas dans la queue (défensif)
+            for (const [id, timer] of Object.entries(timers)) {
+                if (!timer) continue;
+                if (!isActive(timer.status)) continue;
+                keepTimers[id] = timer;
+                if (!keepQueue.includes(id)) keepQueue.push(id);
+            }
+
+            chrome.storage.local.set({
+                [STORAGE_KEY]: keepTimers,
+                [QUEUE_KEY]: keepQueue
+            });
         });
     });
 
@@ -84,10 +113,10 @@ function updatePipeline() {
             activeItems.push({ id, ...timer, position: index + 1 });
         });
 
-        // Items done ou error permanent (hors queue)
+        // Items done/cancelled ou error permanent (hors queue)
         for (const [id, timer] of Object.entries(timers)) {
             if (!queue.includes(id)) {
-                if (timer.status === 'done') {
+                if (timer.status === 'done' || timer.status === 'cancelled') {
                     completedItems.push({ id, ...timer });
                 } else if (timer.status === 'error' && !timer.nextRetryAt) {
                     activeItems.push({ id, ...timer, position: -1 });
@@ -96,7 +125,7 @@ function updatePipeline() {
         }
 
         // Trier les terminés par date (plus récent en premier)
-        completedItems.sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
+        completedItems.sort((a, b) => (b.completedAt || b.statusSince || 0) - (a.completedAt || a.statusSince || 0));
 
         pipelineCount.innerText = activeItems.length;
 
@@ -248,7 +277,7 @@ function updatePipelineCard(card, item) {
             progressBar.style.background = 'linear-gradient(90deg, #8b5cf6, #3b82f6)';
             statusText.innerText = remaining > 0 ? `Countdown: ${remaining}s` : 'Prêt !';
             statusText.style.color = remaining > 0 ? '#3b82f6' : '#10b981';
-            actionGroup.innerHTML = '';
+            setActionButtons(actionGroup, item.id, ['remove']);
             break;
         }
 
@@ -290,7 +319,7 @@ function renderCompletedCards(items, container) {
 
     items.forEach(item => {
         const card = document.createElement('div');
-        card.className = 'timer-card status-done';
+        card.className = `timer-card status-${item.status || 'done'}`;
 
         const header = document.createElement('div');
         header.className = 'timer-header';
@@ -299,8 +328,9 @@ function renderCompletedCards(items, container) {
         nameEl.textContent = item.name || 'Torrent #' + item.id;
         nameEl.title = item.name || '';
         const badge = document.createElement('span');
-        badge.className = 'phase-badge done';
-        badge.textContent = 'Terminé';
+        const isCancelled = item.status === 'cancelled';
+        badge.className = `phase-badge ${isCancelled ? 'cancelled' : 'done'}`;
+        badge.textContent = isCancelled ? 'Annulé' : 'Terminé';
         header.appendChild(nameEl);
         header.appendChild(badge);
 
@@ -309,9 +339,20 @@ function renderCompletedCards(items, container) {
         const statusEl = document.createElement('span');
         statusEl.className = 'timer-status';
         statusEl.style.color = '#6b7280';
-        statusEl.textContent = formatTimeAgo(item.completedAt);
+        statusEl.textContent = formatTimeAgo(item.completedAt || item.statusSince);
         const actionGroup = document.createElement('div');
         actionGroup.className = 'action-group';
+
+        if (isCancelled) {
+            const retryBtn = document.createElement('button');
+            retryBtn.className = 'action-btn retry';
+            retryBtn.textContent = 'Réessayer';
+            retryBtn.onclick = () => {
+                chrome.runtime.sendMessage({ action: 'RETRY_TIMER', torrentId: item.id });
+            };
+            actionGroup.appendChild(retryBtn);
+        }
+
         const removeBtn = document.createElement('button');
         removeBtn.className = 'action-btn remove';
         removeBtn.textContent = 'Retirer';
@@ -386,6 +427,7 @@ function getStatusLabel(status) {
         counting: 'Countdown',
         downloading: 'Téléchargement',
         done: 'Terminé',
+        cancelled: 'Annulé',
         error: 'Erreur'
     };
     return labels[status] || status;
