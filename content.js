@@ -2,14 +2,27 @@
 // YggTorrent Helper v1.3.2 — Thin Sensor + Token Service
 // Détecte les torrents, enqueue au pipeline, affiche l'état
 
+/**
+ * Singleton gérant la détection des torrents et l'affichage de l'UI.
+ * Communique avec le service worker via message passing.
+ * @namespace YggTimerManager
+ */
 const YggTimerManager = {
     storageKey: 'ygg_timers',
     queueKey: 'ygg_queue',
     ui: null,
     torrentId: null,
     countdownInterval: null,
+    currentUrl: null,
+    navigationWatchersInstalled: false,
+    refreshDebounceHandle: null,
 
+    /**
+     * Initialise le gestionnaire : détecte le torrent, crée l'UI, s'enqueue.
+     * @returns {Promise<void>}
+     */
     init: async function() {
+        this.currentUrl = window.location.href;
         this.torrentId = this.getTorrentId();
 
         if (this.torrentId) {
@@ -17,15 +30,29 @@ const YggTimerManager = {
             this.setupUI();
             this.enqueue();
             this.listenForMessages();
-            this.listenForStorageChanges();
         } else {
             console.log("[YggHelper] Aucun ID de torrent trouvé sur cette page.");
             // Écouter quand même PING et REQUEST_TOKEN pour les onglets cachés
             this.listenForMessages();
         }
+
+        // Toujours installer le listener storage (utile en navigation SPA/bfcache)
+        this.listenForStorageChanges();
+
+        // Gérer bfcache + navigation SPA (pushState/replaceState/popstate)
+        this.installNavigationWatchers();
     },
 
     // --- Détection du torrent ---
+
+    /**
+     * Extrait l'ID du torrent de la page actuelle.
+     * Méthode de détection en 3 étapes :
+     * 1. data-torrent-id du bouton de téléchargement
+     * 2. Champ caché du formulaire de signalement
+     * 3. Extraction depuis l'URL
+     * @returns {string|null} L'ID du torrent ou null si non trouvé
+     */
     getTorrentId: function() {
         const downloadBtn = document.getElementById('download-timer-btn');
         if (downloadBtn && downloadBtn.dataset.torrentId) return downloadBtn.dataset.torrentId;
@@ -39,6 +66,10 @@ const YggTimerManager = {
         return null;
     },
 
+    /**
+     * Extrait le nom du torrent de la page actuelle.
+     * @returns {string} Le nom du torrent ou "Torrent" par défaut
+     */
     getTorrentName: function() {
         const reportName = document.querySelector('form#report-torrent strong');
         if (reportName) return reportName.innerText.trim();
@@ -50,28 +81,52 @@ const YggTimerManager = {
     },
 
     // --- Enqueue au pipeline ---
+
+    /**
+     * Envoie le torrent au service worker pour ajout à la file d'attente.
+     * Gère les réponses de statut (dismissed, done, cancelled, error).
+     */
     enqueue: function() {
+        if (!this.torrentId) return;
+
+        const torrentId = this.torrentId;
         const name = this.getTorrentName();
         const origin = window.location.origin;
 
         chrome.runtime.sendMessage({
             action: 'ENQUEUE',
-            torrentId: this.torrentId,
+            torrentId: torrentId,
             name: name,
             origin: origin
         }, (response) => {
+            // Si on a navigué entre temps (SPA/bfcache), ignorer cette réponse
+            if (this.torrentId !== torrentId) return;
+
             if (chrome.runtime.lastError) {
                 console.error('[YggHelper] Erreur enqueue:', chrome.runtime.lastError.message);
+                if (!this.ui) return;
                 this.updateUIForStatus('error', { lastError: 'Impossible de contacter le service worker' });
                 return;
             }
 
             if (response) {
                 console.log(`[YggHelper] Enqueue réponse: status=${response.status}, position=${response.position}`);
-                this.updateUIForStatus(response.status, {
-                    position: response.position,
-                    countdownEndsAt: response.countdownEndsAt
-                });
+                if (!this.ui) return;
+                // Statuts "terminaux" sur revisite / suppression
+                if (response.status === 'dismissed') {
+                    this.showDismissed();
+                    return;
+                }
+                if (response.status === 'done') {
+                    this.showDone(response);
+                    return;
+                }
+                if (response.status === 'cancelled') {
+                    this.showCancelled(response);
+                    return;
+                }
+
+                this.updateUIForStatus(response.status, response);
             }
         });
     },
@@ -110,11 +165,16 @@ const YggTimerManager = {
                     const queue = result[this.queueKey] || [];
                     const timer = timers[this.torrentId];
 
-                    if (timer) {
-                        // Enrichir avec la position dans la queue
-                        const position = queue.indexOf(this.torrentId) + 1;
-                        this.updateUIForStatus(timer.status, { ...timer, position });
+                    if (!timer) {
+                        // User removed this torrent from popup OR it was cleaned up
+                        this.fadeOutAndRemoveWidget();
+                        return;
                     }
+
+                    // Enrichir avec la position dans la queue
+                    const posIndex = queue.indexOf(this.torrentId);
+                    const position = posIndex >= 0 ? posIndex + 1 : 0;
+                    this.updateUIForStatus(timer.status, { ...timer, position });
                 });
             }
         });
@@ -236,11 +296,17 @@ const YggTimerManager = {
             case 'downloading':
                 this.showDownloading();
                 break;
+            case 'cancelled':
+                this.showCancelled(data);
+                break;
             case 'done':
-                this.showDone();
+                this.showDone(data);
                 break;
             case 'error':
                 this.showError(data.lastError, data.errorType);
+                break;
+            case 'dismissed':
+                this.showDismissed();
                 break;
             default:
                 this.showQueued(0);
@@ -312,27 +378,74 @@ const YggTimerManager = {
             'linear-gradient(to bottom, #10b981, #059669)';
     },
 
-    showDone: function() {
-        this.ui.btn.innerText = '✅ Téléchargé !';
+    showDone: function(data) {
+        if (!this.ui) return;
+        const now = Date.now();
+        const completedAt = data && data.completedAt ? data.completedAt : null;
+        const justCompletedFlag = data && data.justCompleted === true;
+        const justCompletedHeuristic = completedAt && (now - completedAt) < 8000;
+        const justCompleted = justCompletedFlag || justCompletedHeuristic;
+
+        if (justCompleted) {
+            this.ui.btn.innerText = '✅ Téléchargé !';
+            this.ui.btn.style.backgroundColor = '#6b7280';
+            this.ui.btn.style.cursor = 'default';
+            this.ui.btn.onclick = null;
+            this.ui.container.querySelector('.ygg-left-bar').style.background =
+                'linear-gradient(to bottom, #6b7280, #4b5563)';
+
+            const container = this.ui && this.ui.container ? this.ui.container : null;
+            setTimeout(() => this.fadeOutAndRemoveWidget(container), 5000);
+            return;
+        }
+
+        // Revisite: widget persistant + action retélécharger
+        this.ui.btn.innerText = '✅ Déjà téléchargé — Retélécharger';
+        this.ui.btn.style.backgroundColor = '#10b981';
+        this.ui.btn.style.cursor = 'pointer';
+        this.ui.btn.onclick = (e) => {
+            e.preventDefault();
+            chrome.runtime.sendMessage({ action: 'RETRY_TIMER', torrentId: this.torrentId }, () => {
+                if (chrome.runtime.lastError) {
+                    this.showError(chrome.runtime.lastError.message, 'network');
+                    return;
+                }
+                this.showQueued(1);
+            });
+        };
+        this.ui.container.querySelector('.ygg-left-bar').style.background =
+            'linear-gradient(to bottom, #10b981, #059669)';
+    },
+
+    showCancelled: function() {
+        if (!this.ui) return;
+        this.ui.btn.innerText = '⛔ Annulé — Retélécharger';
+        this.ui.btn.style.backgroundColor = '#f59e0b';
+        this.ui.btn.style.cursor = 'pointer';
+        this.ui.btn.onclick = (e) => {
+            e.preventDefault();
+            chrome.runtime.sendMessage({ action: 'RETRY_TIMER', torrentId: this.torrentId }, () => {
+                if (chrome.runtime.lastError) {
+                    this.showError(chrome.runtime.lastError.message, 'network');
+                    return;
+                }
+                this.showQueued(1);
+            });
+        };
+        this.ui.container.querySelector('.ygg-left-bar').style.background =
+            'linear-gradient(to bottom, #f59e0b, #d97706)';
+    },
+
+    showDismissed: function() {
+        if (!this.ui) return;
+        this.ui.btn.innerText = '🚫 Retiré';
         this.ui.btn.style.backgroundColor = '#6b7280';
         this.ui.btn.style.cursor = 'default';
         this.ui.btn.onclick = null;
         this.ui.container.querySelector('.ygg-left-bar').style.background =
             'linear-gradient(to bottom, #6b7280, #4b5563)';
-
-        // Fade out après 5s
-        setTimeout(() => {
-            if (this.ui && this.ui.container) {
-                this.ui.container.style.transition = 'opacity 0.5s, transform 0.5s';
-                this.ui.container.style.opacity = '0';
-                this.ui.container.style.transform = 'translateY(20px)';
-                setTimeout(() => {
-                    if (this.ui && this.ui.container) {
-                        this.ui.container.remove();
-                    }
-                }, 500);
-            }
-        }, 5000);
+        const container = this.ui && this.ui.container ? this.ui.container : null;
+        setTimeout(() => this.fadeOutAndRemoveWidget(container), 1200);
     },
 
     showError: function(errorMessage, errorType) {
@@ -356,6 +469,102 @@ const YggTimerManager = {
         this.ui.btn.onclick = null;
         this.ui.container.querySelector('.ygg-left-bar').style.background =
             'linear-gradient(to bottom, #ef4444, #dc2626)';
+    },
+
+    fadeOutAndRemoveWidget: function(containerToRemove) {
+        if (this.countdownInterval) {
+            clearInterval(this.countdownInterval);
+            this.countdownInterval = null;
+        }
+
+        const container = containerToRemove || (this.ui && this.ui.container ? this.ui.container : null);
+        if (!container) return;
+
+        container.style.transition = 'opacity 0.5s, transform 0.5s';
+        container.style.opacity = '0';
+        container.style.transform = 'translateY(20px)';
+
+        setTimeout(() => {
+            try {
+                container.remove();
+            } catch (e) {}
+            if (this.ui && this.ui.container === container) {
+                this.ui = null;
+            }
+        }, 500);
+    },
+
+    // --- Navigation / bfcache / SPA ---
+    installNavigationWatchers: function() {
+        if (this.navigationWatchersInstalled) return;
+        this.navigationWatchersInstalled = true;
+
+        const triggerRefresh = (reason) => {
+            if (this.refreshDebounceHandle) {
+                clearTimeout(this.refreshDebounceHandle);
+            }
+            this.refreshDebounceHandle = setTimeout(() => {
+                this.refreshTorrentContextIfChanged(reason);
+            }, 50);
+        };
+
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted) {
+                triggerRefresh('bfcache');
+            }
+        });
+
+        window.addEventListener('popstate', () => triggerRefresh('popstate'));
+        window.addEventListener('hashchange', () => triggerRefresh('hashchange'));
+        window.addEventListener('ygghelper:navigation', () => triggerRefresh('history'));
+
+        if (!window.__yggHelperHistoryPatched) {
+            window.__yggHelperHistoryPatched = true;
+            const originalPushState = history.pushState;
+            const originalReplaceState = history.replaceState;
+
+            history.pushState = function() {
+                const result = originalPushState.apply(this, arguments);
+                window.dispatchEvent(new Event('ygghelper:navigation'));
+                return result;
+            };
+            history.replaceState = function() {
+                const result = originalReplaceState.apply(this, arguments);
+                window.dispatchEvent(new Event('ygghelper:navigation'));
+                return result;
+            };
+        }
+    },
+
+    refreshTorrentContextIfChanged: function(reason) {
+        const freshUrl = window.location.href;
+        const freshId = this.getTorrentId();
+
+        const urlChanged = this.currentUrl && this.currentUrl !== freshUrl;
+        const idChanged = (freshId || null) !== (this.torrentId || null);
+
+        if (!urlChanged && !idChanged) return;
+
+        console.log(`[YggHelper] Navigation (${reason}): urlChanged=${urlChanged}, idChanged=${idChanged}`);
+        this.currentUrl = freshUrl;
+
+        if (!freshId) {
+            if (this.torrentId) {
+                console.log(`[YggHelper] Page sans torrentId (avant=${this.torrentId}), nettoyage UI`);
+                this.torrentId = null;
+                this.fadeOutAndRemoveWidget();
+            }
+            return;
+        }
+
+        if (freshId !== this.torrentId) {
+            console.log(`[YggHelper] torrentId changé ${this.torrentId} → ${freshId}`);
+            const oldContainer = this.ui && this.ui.container ? this.ui.container : null;
+            this.torrentId = freshId;
+            this.fadeOutAndRemoveWidget(oldContainer);
+            this.setupUI();
+            this.enqueue();
+        }
     },
 
     // --- UI: Création du widget ---

@@ -107,6 +107,38 @@ Un script PowerShell est fourni pour générer un fichier `.crx` :
 
 La clé de signature (`ygg-helper-dl-key.pem`) est générée automatiquement au premier build et stockée dans le dossier parent. Ne la partagez pas.
 
+## ❓ FAQ
+
+### L'extension ne détecte pas les torrents sur Brave
+
+Sur Brave, les extensions installées via `.crx` peuvent mal fonctionner. Utilisez **"Charger l'extension non empaquetée"** (voir Installation).
+
+### J'ai une erreur "Rate limit"
+
+YggTorrent limite le nombre de téléchargements. L'extension réessaie automatiquement avec un délai croissant. Attendez quelques minutes.
+
+### Le domaine YggTorrent a changé
+
+Utilisez la fonctionnalité **"Domaine personnalisé"** dans le popup pour ajouter le nouveau domaine.
+
+### Les torrents restent en file d'attente
+
+Vérifiez que vous êtes connecté à votre compte YggTorrent. Certains torrents nécessitent une authentification.
+
+### Comment voir les logs ?
+
+Ouvrez la console du Service Worker :
+1. Allez sur `chrome://extensions`
+2. Cliquez sur "Service Worker" sous YggTorrent Helper
+3. La console s'ouvre avec les logs `[Pipeline]`
+
+## 📚 Documentation
+
+- [Guide Utilisateur](docs/USER_GUIDE.md) — Guide complet en français
+- [Architecture](docs/ARCHITECTURE.md) — Diagrammes et design technique
+- [CHANGELOG](CHANGELOG.md) — Historique des versions
+- [Contribuer](CONTRIBUTING.md) — Guide pour les contributeurs
+
 ## 🙏 Crédits
 
 - **[MoowGlax](https://github.com/MoowGlax)** — Auteur original de ygg-helper-dl

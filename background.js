@@ -9,6 +9,27 @@ const PIPELINE_STATE_KEY = 'ygg_pipeline_state';
 const PIPELINE_LOCK_KEY = 'ygg_pipeline_lock';
 const STATS_KEY = 'ygg_stats_wasted';
 const DOMAIN_KEY = 'ygg_custom_domain';
+const DISMISSED_KEY = 'ygg_dismissed';
+
+// --- Helpers de statut ---
+
+/**
+ * Vérifie si un statut est terminal (ne peut plus changer).
+ * @param {string} status - Le statut à vérifier
+ * @returns {boolean} true si le statut est 'done', 'cancelled', ou 'error'
+ */
+function isTerminal(status) {
+    return status === 'done' || status === 'cancelled' || (status === 'error');
+}
+
+/**
+ * Vérifie si un statut est actif (en cours de traitement).
+ * @param {string} status - Le statut à vérifier
+ * @returns {boolean} true si le statut est 'queued', 'requesting', 'counting', ou 'downloading'
+ */
+function isActive(status) {
+    return status === 'queued' || status === 'requesting' || status === 'counting' || status === 'downloading';
+}
 
 // --- Configuration ---
 const TIMER_DURATION = 30000; // 30 secondes
@@ -42,6 +63,11 @@ chrome.runtime.onStartup.addListener(() => {
 
 chrome.runtime.onInstalled.addListener(() => {
     console.log('[Pipeline] Extension installée/mise à jour (onInstalled)');
+
+    // Nettoyer les notifications de mise à jour obsolètes (ex: changement de version)
+    chrome.storage.local.remove('ygg_update_available');
+    chrome.action.setBadgeText({ text: "" });
+
     checkForUpdates();
     registerCustomDomainScripts();
     recoverPipeline();
@@ -71,6 +97,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // PIPELINE CORE
 // ============================================================
 
+/**
+ * Acquiert un verrou lease-based pour le pipeline.
+ * Le verrou expire automatiquement après LOCK_TTL ms.
+ * @returns {Promise<string|null>} L'ID du propriétaire du lock, ou null si déjà verrouillé
+ */
 async function acquireLock() {
     const result = await chrome.storage.local.get([PIPELINE_LOCK_KEY]);
     const lock = result[PIPELINE_LOCK_KEY];
@@ -90,6 +121,11 @@ async function acquireLock() {
     return lockOwner;
 }
 
+/**
+ * Relâche le verrou du pipeline si on en est le propriétaire.
+ * @param {string} owner - L'ID du propriétaire du lock
+ * @returns {Promise<void>}
+ */
 async function releaseLock(owner) {
     const result = await chrome.storage.local.get([PIPELINE_LOCK_KEY]);
     const lock = result[PIPELINE_LOCK_KEY];
@@ -100,6 +136,12 @@ async function releaseLock(owner) {
     }
 }
 
+/**
+ * Processeur idempotent de la file d'attente.
+ * Gère les états stale, rate-limiting, et déclenche les étapes suivantes.
+ * Utilise un verrou lease-based pour éviter les race conditions.
+ * @returns {Promise<void>}
+ */
 async function processQueue() {
     let lockOwner = await acquireLock();
     if (!lockOwner) {
@@ -182,10 +224,23 @@ async function processQueue() {
             }
         }
 
+        // Nettoyer les items terminaux qui seraient restés en queue
+        const cleanedQueue = queue.filter(id => {
+            const t = timers[id];
+            return t && !isTerminal(t.status);
+        });
+        if (cleanedQueue.length !== queue.length) {
+            console.log(`[Pipeline] Nettoyage queue: ${queue.length} → ${cleanedQueue.length} items`);
+            await chrome.storage.local.set({ [QUEUE_KEY]: cleanedQueue });
+            // Continuer avec la queue nettoyée
+            queue.length = 0;
+            cleanedQueue.forEach(id => queue.push(id));
+        }
+
         // Chercher un timer en cours (requesting, counting, downloading)
         const inFlightId = queue.find(id => {
             const t = timers[id];
-            return t && (t.status === 'requesting' || t.status === 'counting' || t.status === 'downloading');
+            return t && isActive(t.status) && t.status !== 'queued';
         });
 
         if (inFlightId) {
@@ -249,6 +304,12 @@ async function processQueue() {
     }
 }
 
+/**
+ * Planifie l'exécution de processQueue à un moment donné.
+ * Ne repousse pas une alarme déjà planifiée plus tôt.
+ * @param {number} when - Timestamp Unix en ms pour l'exécution
+ * @returns {Promise<void>}
+ */
 async function scheduleProcessQueue(when) {
     const target = Math.max(when, Date.now() + 1000);
     // Ne jamais repousser une alarme déjà planifiée plus tôt
@@ -259,6 +320,11 @@ async function scheduleProcessQueue(when) {
     chrome.alarms.create(ALARM_PROCESS_QUEUE, { when: target });
 }
 
+/**
+ * Calcule le délai avant retry avec backoff exponentiel et jitter.
+ * @param {number} retryCount - Nombre de tentatives déjà effectuées
+ * @returns {number} Délai en ms avant le prochain retry
+ */
 function calculateRetryDelay(retryCount) {
     const delay = BASE_RETRY_DELAY * Math.pow(2, retryCount - 1);
     // Ajouter du jitter (±20%)
@@ -270,6 +336,13 @@ function calculateRetryDelay(retryCount) {
 // TOKEN ACQUISITION
 // ============================================================
 
+/**
+ * Demande un token de téléchargement pour un torrent.
+ * Essaie d'abord via un onglet ouvert, puis via un onglet caché en fallback.
+ * @param {string} torrentId - L'ID du torrent
+ * @param {Object} timer - L'objet timer contenant origin et requestNonce
+ * @returns {Promise<void>}
+ */
 async function requestToken(torrentId, timer) {
     const nonce = timer.requestNonce;
 
@@ -282,6 +355,13 @@ async function requestToken(torrentId, timer) {
     await requestTokenViaHiddenTab(torrentId, timer.origin, nonce);
 }
 
+/**
+ * Demande un token via un onglet YggTorrent existant.
+ * @param {string} torrentId - L'ID du torrent
+ * @param {string} origin - L'origine du domaine YggTorrent
+ * @param {string} nonce - Identifiant unique pour cette requête
+ * @returns {Promise<boolean>} true si la requête a été envoyée, false sinon
+ */
 async function requestTokenViaTab(torrentId, origin, nonce) {
     try {
         // Chercher un onglet YggTorrent ouvert sur le bon domaine
@@ -633,6 +713,23 @@ async function handleCountdownComplete(torrentId) {
 }
 
 async function triggerDownload(torrentId, timer) {
+    // Relire depuis le storage pour éviter les doublons
+    // (processQueue + alarme countdown peuvent appeler cette fonction en parallèle)
+    const freshResult = await chrome.storage.local.get([STORAGE_KEY]);
+    const freshTimers = freshResult[STORAGE_KEY] || {};
+    const freshTimer = freshTimers[torrentId];
+
+    if (!freshTimer || freshTimer.status === 'downloading' || freshTimer.status === 'done') {
+        console.log(`[Pipeline] triggerDownload ignoré pour ${torrentId} (status=${freshTimer?.status})`);
+        return;
+    }
+
+    // Utiliser les données fraîches
+    timer = freshTimer;
+
+    // Annuler l'alarme countdown (éviter un second déclenchement)
+    try { await chrome.alarms.clear(ALARM_COUNTDOWN_PREFIX + torrentId); } catch (e) {}
+
     const downloadUrl = `${timer.origin}/engine/download_torrent?id=${encodeURIComponent(torrentId)}&token=${encodeURIComponent(timer.token)}`;
     const rawName = (timer.name || 'Torrent')
         .replace(/[\x00-\x1f<>:"/\\|?*]/g, '_') // control chars + filesystem-unsafe
@@ -646,11 +743,16 @@ async function triggerDownload(torrentId, timer) {
     timer.status = 'downloading';
     timer.statusSince = Date.now();
 
+    // Écrire le statut AVANT le download pour bloquer les appels concurrents
+    freshTimers[torrentId] = timer;
+    await chrome.storage.local.set({ [STORAGE_KEY]: freshTimers });
+
     try {
         const downloadId = await new Promise((resolve, reject) => {
             chrome.downloads.download({
                 url: downloadUrl,
                 filename: filename,
+                saveAs: false,
                 conflictAction: 'uniquify'
             }, (id) => {
                 if (chrome.runtime.lastError) {
@@ -706,10 +808,34 @@ chrome.downloads.onChanged.addListener(async (delta) => {
     const now = Date.now();
 
     if (delta.state.current === 'complete') {
+        // Vérifier que c'est bien un .torrent et pas une page HTML (token expiré/invalide)
+        try {
+            const [downloadItem] = await chrome.downloads.search({ id: delta.id });
+            if (downloadItem && downloadItem.mime && downloadItem.mime.includes('text/html')) {
+                console.log(`[Pipeline] Téléchargement HTML détecté pour ${timer.name} — token invalide`);
+                timer.status = 'error';
+                timer.statusSince = now;
+                timer.lastError = 'Le serveur a retourné une page HTML au lieu du fichier torrent';
+                timer.errorType = 'rate_limit';
+                timer.retryCount = (timer.retryCount || 0) + 1;
+                if (timer.retryCount <= MAX_RETRIES) {
+                    timer.nextRetryAt = now + calculateRetryDelay(timer.retryCount);
+                    await scheduleProcessQueue(timer.nextRetryAt);
+                }
+                // Supprimer le fichier .htm téléchargé
+                try { chrome.downloads.removeFile(delta.id); } catch (e) {}
+                await chrome.storage.local.set({ [STORAGE_KEY]: timers });
+                return;
+            }
+        } catch (e) {
+            console.log(`[Pipeline] Impossible de vérifier le MIME du téléchargement:`, e);
+        }
+
         console.log(`[Pipeline] Téléchargement terminé: ${timer.name}`);
         timer.status = 'done';
         timer.statusSince = now;
         timer.completedAt = now;
+        timer.justCompleted = true;
 
         // Retirer de la queue
         const newQueue = queue.filter(id => id !== torrentId);
@@ -735,7 +861,40 @@ chrome.downloads.onChanged.addListener(async (delta) => {
         }
 
     } else if (delta.state.current === 'interrupted') {
-        const errorMsg = delta.error ? delta.error.current : 'Téléchargement interrompu';
+        const errorReason = delta.error ? delta.error.current : '';
+
+        // Annulation délibérée par l'utilisateur
+        if (errorReason === 'USER_CANCELED') {
+            console.log(`[Pipeline] Téléchargement annulé par l'utilisateur: ${timer.name}`);
+            timer.status = 'cancelled';
+            timer.statusSince = now;
+            timer.lastError = 'Annulé par l\'utilisateur';
+            // Pas de nextRetryAt, pas de retry automatique
+
+            const newQueue = queue.filter(id => id !== torrentId);
+
+            await chrome.storage.local.set({
+                [STORAGE_KEY]: timers,
+                [QUEUE_KEY]: newQueue
+            });
+
+            // Relancer le pipeline pour les items restants
+            if (newQueue.length > 0) {
+                await scheduleProcessQueue(now + COOLDOWN_BETWEEN_DOWNLOADS);
+            }
+
+            // Fermer l'onglet caché si plus rien pour ce domaine
+            const remainingForOrigin = newQueue.some(id =>
+                timers[id] && timers[id].origin === timer.origin && isActive(timers[id].status)
+            );
+            if (!remainingForOrigin) {
+                await cleanupHiddenTab();
+            }
+            return;
+        }
+
+        // Autres interruptions (réseau, etc.) → retry avec backoff
+        const errorMsg = errorReason || 'Téléchargement interrompu';
         console.log(`[Pipeline] Téléchargement échoué: ${errorMsg}`);
         timer.status = 'error';
         timer.statusSince = now;
@@ -757,19 +916,46 @@ chrome.downloads.onChanged.addListener(async (delta) => {
 // ============================================================
 
 async function handleEnqueue(torrentId, name, origin, sendResponse) {
-    const result = await chrome.storage.local.get([QUEUE_KEY, STORAGE_KEY]);
+    const result = await chrome.storage.local.get([QUEUE_KEY, STORAGE_KEY, DISMISSED_KEY]);
     const queue = result[QUEUE_KEY] || [];
     const timers = result[STORAGE_KEY] || {};
+    const dismissed = result[DISMISSED_KEY] || {};
     const now = Date.now();
 
-    // Déduplication : si déjà en queue ou in-flight, rafraîchir les infos
+    // Vérifie si l'utilisateur a explicitement retiré ce torrent
+    if (dismissed[torrentId]) {
+        console.log(`[Pipeline] Enqueue ignoré: ${torrentId} a été retiré par l'utilisateur`);
+        sendResponse({ status: 'dismissed' });
+        return;
+    }
+
+    // Déduplication : si déjà connu
     if (timers[torrentId]) {
         const existing = timers[torrentId];
 
-        // Si terminé ou erreur permanente, permettre le re-téléchargement
-        if (existing.status === 'done' || (existing.status === 'error' && !existing.nextRetryAt)) {
-            console.log(`[Pipeline] Re-enqueue: ${torrentId} (était ${existing.status})`);
-            // Reset complet
+        // Terminé → ne pas re-enqueue, montrer l'état
+        if (existing.status === 'done') {
+            console.log(`[Pipeline] Torrent ${torrentId} déjà téléchargé`);
+            existing.name = name || existing.name;
+            existing.origin = origin || existing.origin;
+            await chrome.storage.local.set({ [STORAGE_KEY]: timers });
+            sendResponse({ status: 'done', completedAt: existing.completedAt });
+            return;
+        }
+
+        // Annulé par l'utilisateur → ne pas re-enqueue
+        if (existing.status === 'cancelled') {
+            console.log(`[Pipeline] Torrent ${torrentId} annulé par l'utilisateur`);
+            existing.name = name || existing.name;
+            existing.origin = origin || existing.origin;
+            await chrome.storage.local.set({ [STORAGE_KEY]: timers });
+            sendResponse({ status: 'cancelled' });
+            return;
+        }
+
+        // Erreur permanente (pas de retry auto) → permettre le re-téléchargement
+        if (existing.status === 'error' && !existing.nextRetryAt) {
+            console.log(`[Pipeline] Re-enqueue: ${torrentId} (était erreur permanente)`);
             timers[torrentId] = {
                 status: 'queued',
                 name: name || existing.name,
@@ -800,12 +986,10 @@ async function handleEnqueue(torrentId, name, origin, sendResponse) {
             return;
         }
 
-        // Sinon, juste rafraîchir les infos
+        // In-flight ou en attente de retry → juste rafraîchir les infos
         existing.name = name || existing.name;
         existing.origin = origin || existing.origin;
-
         await chrome.storage.local.set({ [STORAGE_KEY]: timers });
-
         sendResponse({
             status: existing.status,
             position: queue.indexOf(torrentId) + 1,
@@ -834,7 +1018,6 @@ async function handleEnqueue(torrentId, name, origin, sendResponse) {
         requestNonce: null
     };
 
-    // Ajouter à la queue (à la fin)
     if (!queue.includes(torrentId)) {
         queue.push(torrentId);
     }
@@ -852,7 +1035,6 @@ async function handleEnqueue(torrentId, name, origin, sendResponse) {
         countdownEndsAt: null
     });
 
-    // Lancer le pipeline
     processQueue();
 }
 
@@ -921,9 +1103,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 // ============================================================
 
 async function retryTimer(torrentId) {
-    const result = await chrome.storage.local.get([STORAGE_KEY, QUEUE_KEY]);
+    const result = await chrome.storage.local.get([STORAGE_KEY, QUEUE_KEY, DISMISSED_KEY]);
     const timers = result[STORAGE_KEY] || {};
     const queue = result[QUEUE_KEY] || [];
+    const dismissed = result[DISMISSED_KEY] || {};
     const timer = timers[torrentId];
 
     if (!timer) return;
@@ -944,9 +1127,13 @@ async function retryTimer(torrentId) {
         queue.unshift(torrentId); // Priorité: au début
     }
 
+    // Retirer de la dismissed list si présent
+    delete dismissed[torrentId];
+
     await chrome.storage.local.set({
         [STORAGE_KEY]: timers,
-        [QUEUE_KEY]: queue
+        [QUEUE_KEY]: queue,
+        [DISMISSED_KEY]: dismissed
     });
 
     console.log(`[Pipeline] Retry manuel pour ${torrentId}`);
@@ -954,12 +1141,17 @@ async function retryTimer(torrentId) {
 }
 
 async function removeTimer(torrentId) {
-    const result = await chrome.storage.local.get([STORAGE_KEY, QUEUE_KEY]);
+    const result = await chrome.storage.local.get([STORAGE_KEY, QUEUE_KEY, DISMISSED_KEY]);
     const timers = result[STORAGE_KEY] || {};
     const queue = result[QUEUE_KEY] || [];
+    const dismissed = result[DISMISSED_KEY] || {};
 
+    const removedTimer = timers[torrentId];
     delete timers[torrentId];
     const newQueue = queue.filter(id => id !== torrentId);
+
+    // Se souvenir que l'utilisateur a retiré ce torrent (map avec timestamp)
+    dismissed[torrentId] = Date.now();
 
     // Supprimer l'alarme countdown si elle existe
     try {
@@ -968,10 +1160,21 @@ async function removeTimer(torrentId) {
 
     await chrome.storage.local.set({
         [STORAGE_KEY]: timers,
-        [QUEUE_KEY]: newQueue
+        [QUEUE_KEY]: newQueue,
+        [DISMISSED_KEY]: dismissed
     });
 
-    console.log(`[Pipeline] Timer ${torrentId} supprimé`);
+    console.log(`[Pipeline] Timer ${torrentId} supprimé et ajouté aux dismissals`);
+
+    // Fermer l'onglet caché si plus rien pour ce domaine
+    if (removedTimer && removedTimer.origin) {
+        const remainingForOrigin = newQueue.some(id =>
+            timers[id] && timers[id].origin === removedTimer.origin && isActive(timers[id].status)
+        );
+        if (!remainingForOrigin && hiddenTabOrigin === removedTimer.origin) {
+            await cleanupHiddenTab();
+        }
+    }
 
     // Relancer si d'autres items attendent
     if (newQueue.length > 0) {
@@ -1053,32 +1256,37 @@ function addWastedTime(seconds) {
 }
 
 function cleanupCompletedTimers() {
-    chrome.storage.local.get([STORAGE_KEY, QUEUE_KEY], (result) => {
+    chrome.storage.local.get([STORAGE_KEY, QUEUE_KEY, DISMISSED_KEY], (result) => {
         const timers = result[STORAGE_KEY] || {};
         const queue = result[QUEUE_KEY] || [];
+        const dismissed = result[DISMISSED_KEY] || {};
         const now = Date.now();
         let changed = false;
 
         for (const [id, timer] of Object.entries(timers)) {
-            // Supprimer les timers terminés depuis plus d'1h
-            if (timer.status === 'done' && timer.completedAt && (now - timer.completedAt > CLEANUP_INTERVAL)) {
-                delete timers[id];
-                changed = true;
-            }
-            // Supprimer les erreurs permanentes depuis plus d'1h
-            if (timer.status === 'error' && !timer.nextRetryAt && timer.statusSince && (now - timer.statusSince > CLEANUP_INTERVAL)) {
+            const age = now - (timer.completedAt || timer.statusSince || 0);
+            // Supprimer les items terminaux depuis plus d'1h
+            if (isTerminal(timer.status) && !timer.nextRetryAt && age > CLEANUP_INTERVAL) {
                 delete timers[id];
                 changed = true;
             }
         }
 
-        if (changed) {
-            // Nettoyer la queue aussi
+        // Nettoyer la dismissed list (entrées de plus de 7 jours)
+        const DISMISSED_TTL = 7 * 24 * 60 * 60 * 1000;
+        let dismissedChanged = false;
+        for (const [id, dismissedAt] of Object.entries(dismissed)) {
+            if (now - dismissedAt > DISMISSED_TTL) {
+                delete dismissed[id];
+                dismissedChanged = true;
+            }
+        }
+
+        if (changed || dismissedChanged) {
             const cleanQueue = queue.filter(id => timers[id]);
-            chrome.storage.local.set({
-                [STORAGE_KEY]: timers,
-                [QUEUE_KEY]: cleanQueue
-            });
+            const updates = { [STORAGE_KEY]: timers, [QUEUE_KEY]: cleanQueue };
+            if (dismissedChanged) updates[DISMISSED_KEY] = dismissed;
+            chrome.storage.local.set(updates);
         }
     });
 }
