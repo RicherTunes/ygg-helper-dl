@@ -263,6 +263,14 @@ When the Service Worker restarts (`onStartup`/`onInstalled`):
 | `CLEANUP_INTERVAL` | 1h | Cleanup completed timers |
 | `DISMISSED_TTL` | 7 days | Expiry for dismissed torrents |
 
+### UI Timing Constants (content.js)
+
+| Timing | Value | Purpose |
+|--------|-------|---------|
+| Done fade out | 5s | Delay before widget removal after success |
+| Dismissed fade out | 1.2s | Delay before widget removal after user dismiss |
+| justCompleted heuristic | 8s | Time window to consider download "fresh" |
+
 ## Download Verification
 
 When a download completes, the pipeline verifies it wasn't an HTML error page (expired/invalid token):
@@ -327,6 +335,15 @@ On download success, a `justCompleted: true` flag is set:
 - Used by content script to show "✅ Téléchargé !" animation
 - Widget fades out after 5 seconds
 - On page revisit, widget shows "✅ Déjà téléchargé — Retélécharger"
+
+**Heuristic detection**: If `completedAt` is within 8 seconds of current time, the torrent is considered "just completed" even without the flag. This handles edge cases where the storage event was missed.
+
+## Dismissed Widget Behavior
+
+When a torrent is removed via the widget close button or popup "Retirer":
+- Widget shows "🚫 Retiré" for 1.2 seconds
+- Widget then fades out smoothly
+- Torrent ID is added to `ygg_dismissed` with 7-day TTL
 | `DISMISSED_TTL` | 7 days | Remembered removal duration |
 
 ## Download Verification
