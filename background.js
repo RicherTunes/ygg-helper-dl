@@ -1251,7 +1251,7 @@ function addWastedTime(seconds) {
         const currentTotal = result[STATS_KEY] || 0;
         const newTotal = currentTotal + seconds;
         chrome.storage.local.set({ [STATS_KEY]: newTotal });
-        console.log(`[Stats] Temps perdu total : ${newTotal}s`);
+        console.log(`[Stats] Temps gagné total : ${newTotal}s`);
     });
 }
 
