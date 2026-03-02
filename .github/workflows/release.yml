@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build extension
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from manifest.json
+        id: version
+        run: |
+          VERSION=$(jq -r '.version' manifest.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          chmod +x ./scripts/extract-changelog.sh
+          VERSION="${{ steps.version.outputs.version }}"
+          CHANGELOG=$(./scripts/extract-changelog.sh "$VERSION" 2>/dev/null || echo "")
+
+          if [ -z "$CHANGELOG" ]; then
+            echo "No changelog entry found for $VERSION"
+            echo "changelog=Release $VERSION" >> $GITHUB_OUTPUT
+          else
+            # Use heredoc for safe multi-line output
+            {
+              echo 'changelog<<EOF'
+              echo "$CHANGELOG"
+              echo EOF
+            } >> $GITHUB_OUTPUT
+            echo "Extracted changelog for $VERSION"
+          fi
+
+      - name: Build extension package
+        run: |
+          chmod +x ./build.sh
+          ./build.sh
+          mkdir -p dist
+          mv ygg-helper-dl-*.zip dist/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-package
+          path: dist/*.zip
+          retention-days: 1
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: extension-package
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: v${{ needs.build.outputs.version }}
+          body: ${{ needs.build.outputs.changelog }}
+          files: dist/*.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

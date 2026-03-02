@@ -1,0 +1,205 @@
+name: Validate Extension
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate-manifest:
+    name: Validate manifest.json
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Parse manifest.json
+        id: parse-manifest
+        run: |
+          # Parse manifest.json and extract values
+          if ! jq -e . manifest.json > /dev/null 2>&1; then
+            echo "::error::manifest.json is not valid JSON"
+            exit 1
+          fi
+
+          # Extract required fields
+          NAME=$(jq -r '.name' manifest.json)
+          VERSION=$(jq -r '.version' manifest.json)
+          MANIFEST_VERSION=$(jq -r '.manifest_version' manifest.json)
+
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "manifest_version=$MANIFEST_VERSION" >> $GITHUB_OUTPUT
+
+          echo "Parsed manifest: name=$NAME, version=$VERSION, manifest_version=$MANIFEST_VERSION"
+
+      - name: Check required fields exist
+        run: |
+          NAME="${{ steps.parse-manifest.outputs.name }}"
+          VERSION="${{ steps.parse-manifest.outputs.version }}"
+          MANIFEST_VERSION="${{ steps.parse-manifest.outputs.manifest_version }}"
+
+          if [ "$NAME" = "null" ] || [ -z "$NAME" ]; then
+            echo "::error::Required field 'name' is missing or empty in manifest.json"
+            exit 1
+          fi
+
+          if [ "$VERSION" = "null" ] || [ -z "$VERSION" ]; then
+            echo "::error::Required field 'version' is missing or empty in manifest.json"
+            exit 1
+          fi
+
+          if [ "$MANIFEST_VERSION" = "null" ] || [ -z "$MANIFEST_VERSION" ]; then
+            echo "::error::Required field 'manifest_version' is missing or empty in manifest.json"
+            exit 1
+          fi
+
+          echo "All required fields present: name, version, manifest_version"
+
+      - name: Verify version matches semver pattern
+        run: |
+          VERSION="${{ steps.parse-manifest.outputs.version }}"
+
+          # Check if version matches semver pattern X.Y.Z (no prefix)
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Version '$VERSION' does not match semver pattern X.Y.Z (e.g., 1.2.3)"
+            exit 1
+          fi
+
+          echo "Version $VERSION matches semver pattern X.Y.Z"
+
+  check-file-existence:
+    name: Check referenced files exist
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check service worker file
+        run: |
+          SERVICE_WORKER=$(jq -r '.background.service_worker' manifest.json)
+
+          if [ "$SERVICE_WORKER" = "null" ] || [ -z "$SERVICE_WORKER" ]; then
+            echo "::error::Field 'background.service_worker' is missing in manifest.json"
+            exit 1
+          fi
+
+          if [ ! -f "$SERVICE_WORKER" ]; then
+            echo "::error::Service worker file '$SERVICE_WORKER' referenced in manifest.json does not exist"
+            exit 1
+          fi
+
+          echo "Service worker file exists: $SERVICE_WORKER"
+
+      - name: Check content script files
+        run: |
+          # Extract content scripts files
+          JS_FILES=$(jq -r '.content_scripts[].js[]' manifest.json)
+          CSS_FILES=$(jq -r '.content_scripts[].css[]' manifest.json)
+
+          # Check JS files
+          for file in $JS_FILES; do
+            if [ ! -f "$file" ]; then
+              echo "::error::Content script file '$file' referenced in manifest.json does not exist"
+              exit 1
+            fi
+            echo "Content script file exists: $file"
+          done
+
+          # Check CSS files
+          for file in $CSS_FILES; do
+            if [ ! -f "$file" ]; then
+              echo "::error::Content script CSS file '$file' referenced in manifest.json does not exist"
+              exit 1
+            fi
+            echo "Content script CSS file exists: $file"
+          done
+
+      - name: Check default popup file
+        run: |
+          POPUP_FILE=$(jq -r '.action.default_popup' manifest.json)
+
+          if [ "$POPUP_FILE" = "null" ] || [ -z "$POPUP_FILE" ]; then
+            echo "::error::Field 'action.default_popup' is missing in manifest.json"
+            exit 1
+          fi
+
+          if [ ! -f "$POPUP_FILE" ]; then
+            echo "::error::Popup file '$POPUP_FILE' referenced in manifest.json does not exist"
+            exit 1
+          fi
+
+          echo "Popup file exists: $POPUP_FILE"
+
+      - name: Check icon files
+        run: |
+          # Check action icons
+          ICON_16=$(jq -r '.action.default_icon."16"' manifest.json)
+          ICON_48=$(jq -r '.action.default_icon."48"' manifest.json)
+          ICON_128=$(jq -r '.action.default_icon."128"' manifest.json)
+
+          if [ "$ICON_16" != "null" ] && [ ! -f "$ICON_16" ]; then
+            echo "::error::Icon file '$ICON_16' referenced in action.default_icon does not exist"
+            exit 1
+          fi
+
+          if [ "$ICON_48" != "null" ] && [ ! -f "$ICON_48" ]; then
+            echo "::error::Icon file '$ICON_48' referenced in action.default_icon does not exist"
+            exit 1
+          fi
+
+          if [ "$ICON_128" != "null" ] && [ ! -f "$ICON_128" ]; then
+            echo "::error::Icon file '$ICON_128' referenced in action.default_icon does not exist"
+            exit 1
+          fi
+
+          # Check icons section
+          ICON_16_MAIN=$(jq -r '.icons."16"' manifest.json)
+          ICON_48_MAIN=$(jq -r '.icons."48"' manifest.json)
+          ICON_128_MAIN=$(jq -r '.icons."128"' manifest.json)
+
+          if [ "$ICON_16_MAIN" != "null" ] && [ ! -f "$ICON_16_MAIN" ]; then
+            echo "::error::Icon file '$ICON_16_MAIN' referenced in icons does not exist"
+            exit 1
+          fi
+
+          if [ "$ICON_48_MAIN" != "null" ] && [ ! -f "$ICON_48_MAIN" ]; then
+            echo "::error::Icon file '$ICON_48_MAIN' referenced in icons does not exist"
+            exit 1
+          fi
+
+          if [ "$ICON_128_MAIN" != "null" ] && [ ! -f "$ICON_128_MAIN" ]; then
+            echo "::error::Icon file '$ICON_128_MAIN' referenced in icons does not exist"
+            exit 1
+          fi
+
+          echo "All icon files exist"
+
+  validate-changelog:
+    name: Validate CHANGELOG.md
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check CHANGELOG.md exists
+        run: |
+          if [ ! -f "CHANGELOG.md" ]; then
+            echo "::error::CHANGELOG.md file does not exist"
+            exit 1
+          fi
+
+          echo "CHANGELOG.md exists"
+
+      - name: Verify version has corresponding section
+        run: |
+          VERSION=$(jq -r '.version' manifest.json)
+
+          # Check if CHANGELOG contains a section for this version
+          if ! grep -q "\[$VERSION\]" CHANGELOG.md; then
+            echo "::error::Version $VERSION from manifest.json does not have a corresponding section in CHANGELOG.md"
+            echo "::error::Expected to find '## [$VERSION]' or '## [$VERSION] - YYYY-MM-DD' in CHANGELOG.md"
+            exit 1
+          fi
+
+          echo "CHANGELOG.md contains section for version $VERSION"
