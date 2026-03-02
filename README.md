@@ -30,20 +30,18 @@ Une extension web optimisée pour YggTorrent qui gère intelligemment le temps d
 
 ![Notification de Mise à jour](images/update_notif.png)
 
-## 🔄 Différences avec le projet original
+## 🔄 Ce que ce fork apporte
 
-| Fonctionnalité | MoowGlax (original) | RicherTunes (ce fork) |
-|---|---|---|
-| File d'attente | Manuelle (clic requis) | **Automatique (pipeline persistant)** |
-| Téléchargement | Clic "Télécharger" requis | **Auto-download après countdown** |
-| Rate-limiting | Aucune gestion | **Classification 4 types + backoff exponentiel** |
-| Service Worker restart | Perte de l'état | **Récupération automatique + détection stale** |
-| Domaines | Un seul | **24 domaines + domaine personnalisé** |
-| Timer | setInterval (fragile) | **chrome.alarms (fiable MV3)** |
-| Navigation SPA | Non supportée | **Détection pushState/popstate/bfcache** |
-| Onglets fermés | Échec du token | **Fallback onglet caché réutilisable** |
-| Navigateurs | Chrome | **Chrome, Brave, Opera, Edge** |
-| Sécurité | Basique | **Sanitisation XSS, verrou lease-based** |
+Ce fork enrichit le projet original de [MoowGlax](https://github.com/MoowGlax/ygg-helper-dl) avec :
+
+- **Pipeline automatique** — File d'attente persistante avec téléchargements enchaînés automatiquement
+- **Gestion robuste du rate-limit** — Classification des erreurs et backoff exponentiel
+- **Récupération après redémarrage** — Le pipeline reprend où il s'était arrêté
+- **Multi-domaines** — 24 domaines YggTorrent + domaine personnalisé
+- **Navigation SPA** — Détection pushState/popstate/bfcache
+- **Fallback onglet caché** — Fonctionne même sans onglet YggTorrent ouvert
+- **Multi-navigateurs** — Chrome, Brave, Opera, Edge
+- **Timer fiable MV3** — Utilise `chrome.alarms` au lieu de `setInterval`
 
 ## 📦 Installation
 
