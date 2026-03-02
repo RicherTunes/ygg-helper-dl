@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v1.3.3)'
+        required: true
 
 permissions:
   contents: write
@@ -15,9 +20,21 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       changelog: ${{ steps.changelog.outputs.changelog }}
+      tag: ${{ steps.resolve-tag.outputs.tag }}
     steps:
+      - name: Resolve tag
+        id: resolve-tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve-tag.outputs.tag }}
 
       - name: Extract version from manifest.json
         id: version
@@ -28,9 +45,10 @@ jobs:
 
       - name: Verify tag matches manifest version
         run: |
+          TAG="${{ steps.resolve-tag.outputs.tag }}"
           VERSION=$(jq -r '.version' manifest.json)
-          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match manifest version v${VERSION}"
+          if [ "${TAG}" != "v${VERSION}" ]; then
+            echo "::error::Tag ${TAG} does not match manifest version v${VERSION}"
             exit 1
           fi
 
@@ -82,7 +100,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ needs.build.outputs.tag }}
           name: v${{ needs.build.outputs.version }}
           body: ${{ needs.build.outputs.changelog }}
           files: dist/*.zip
