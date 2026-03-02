@@ -1,5 +1,5 @@
 // background.js
-// Service Worker pour YggTorrent Helper v1.3.2
+// Service Worker pour YggTorrent Helper v1.3.3
 // Pipeline de téléchargement automatique avec file d'attente persistante
 
 // --- Clés de stockage ---

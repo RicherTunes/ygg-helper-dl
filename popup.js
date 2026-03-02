@@ -1,4 +1,4 @@
-// popup.js - Dashboard du pipeline v1.3.2
+// popup.js - Dashboard du pipeline v1.3.3
 
 const STORAGE_KEY = 'ygg_timers';
 const QUEUE_KEY = 'ygg_queue';

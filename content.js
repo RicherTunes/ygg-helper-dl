@@ -1,5 +1,5 @@
 // content.js
-// YggTorrent Helper v1.3.2 — Thin Sensor + Token Service
+// YggTorrent Helper v1.3.3 — Thin Sensor + Token Service
 // Détecte les torrents, enqueue au pipeline, affiche l'état
 
 /**

@@ -7,9 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-03-01
+
 ### Added
-- **AGENTS.md documentation hierarchy** — AI-readable documentation for the root, `icons/`, and `images/` directories to help AI assistants understand the codebase structure.
-- **CLAUDE.md enhancements** — Added File Reference table, Testing section, and Commit Guidelines.
+- **Badge compteur** : Le badge de l'extension affiche le nombre d'items actifs dans le pipeline. Quand le pipeline est vide, affiche "NEW" si une mise à jour est disponible.
+- **Notifications** : Notification "Téléchargements terminés" à la fin du pipeline avec bouton "Ouvrir le dossier". Notification d'erreur terminale avec bouton "Réessayer".
+- **Statut `cancelled`** dans le popup : Les téléchargements annulés apparaissent dans la section "Terminés" avec badge "Annulé" et bouton "Réessayer".
+- **Protection bfcache/SPA** : Détection de la navigation arrière/avant et pushState pour re-détecter le torrent ID et éviter d'enqueue le mauvais torrent.
+- **CI/CD** : Workflows GitHub Actions pour releases automatiques (.zip) et validation du manifest/changelog.
+- **Guard tag/version** : La release CI échoue si le tag git ne correspond pas à la version du manifest.
+
+### Fixed
+- **Badge gonflé** : `updateBadge()` utilisait `timer.id` (undefined) au lieu du torrentId, comptant tous les erreurs-avec-retry même si déjà dans la queue.
+- **Retry notification incomplet** : Le bouton "Réessayer" de la notification ne réinitialisait pas `downloadId`, `token`, `countdownEndsAt` et `requestNonce`, risquant un match erroné dans `downloads.onChanged`.
+- **Notification pipeline overcounts** : "N téléchargés" comptait tous les `done` de tous les temps au lieu de ceux depuis la dernière notification.
+- **"Tout Nettoyer" supprimait les actifs** : Le bouton supprimait tout le pipeline y compris les items en cours. Maintenant seuls les items terminaux (done/cancelled/error) sont nettoyés.
+- **Fausse notification de mise à jour** : Nettoyage du badge "NEW" obsolète à l'installation/mise à jour de l'extension.
+- **Widget fantôme sur revisite** : Les torrents déjà téléchargés ou retirés ne sont plus automatiquement remis en queue. Le widget affiche "Déjà téléchargé" ou disparaît selon le cas.
+
+### Changed
+- **build.ps1** : Produit un `.zip` (recommandé) en plus du `.crx`. Utilise `System.IO.Compression.ZipArchive` avec des chemins forward-slash conformes à la spec ZIP.
+- **Action GitHub** : `softprops/action-gh-release` épinglée au SHA du tag v2.5.0 pour la sécurité supply-chain.
+- **Version** : 1.3.2 → 1.3.3.
 
 ## [1.3.2] - 2026-03-01
 
