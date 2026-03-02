@@ -13,14 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.2] - 2026-03-01
 
-### Fixed
-- **Bug `LOCK_KEY` constant** : La constante était définie après son utilisation, causant une erreur silencieuse.
-- **Scheduling async** : Les appels async dans `processQueue()` sont maintenant correctement séquencés.
-- **XSS vulnerability** : Sanitisation du nom du torrent avant affichage dans l'UI (`textContent` au lieu de `innerHTML`).
-- **Sanitisation des erreurs** : Les messages d'erreur sont maintenant échappés avant affichage.
-
-## [1.3.2] - 2026-03-01
-
 ### Added
 - **Pipeline de téléchargement automatique** : Remplacement du système binaire lock/unlock par une file d'attente persistante. Les torrents sont automatiquement enchaînés sans intervention utilisateur.
 - **Auto-download** : Le téléchargement se lance automatiquement à la fin du countdown de 30s — plus besoin de cliquer "Télécharger".
@@ -45,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **popup.js** : Utilise `chrome.storage.onChanged` au lieu du polling 1s pour les mises à jour de statut. Nouvelle UI avec cartes de pipeline montrant les 6 états.
 - **popup.html** : Section "En attente" renommée en "Pipeline", ajout de la section "Terminés".
 - **Version** : 1.3.1 → 1.3.2.
+
+### Fixed
+- **Bug `LOCK_KEY` constant** : La constante était définie après son utilisation, causant une erreur silencieuse.
+- **Scheduling async** : Les appels async dans `processQueue()` sont maintenant correctement séquencés.
+- **XSS vulnerability** : Sanitisation du nom du torrent avant affichage dans l'UI (`textContent` au lieu de `innerHTML`).
+- **Sanitisation des erreurs** : Les messages d'erreur sont maintenant échappés avant affichage.
 
 ### Removed
 - Verrou binaire `isTimerRunning` en mémoire (remplacé par file d'attente persistante).
