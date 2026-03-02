@@ -53,12 +53,166 @@ const ALARM_UPDATE_CHECK = 'ygg_update_check';
 const ALARM_CLEANUP = 'ygg_cleanup';
 const ALARM_COUNTDOWN_PREFIX = 'ygg_countdown_';
 
+// --- Notification IDs ---
+const NOTIF_PIPELINE_COMPLETE = 'ygg-pipeline-complete';
+const NOTIF_ERROR_PREFIX = 'ygg-error-';
+
+// ============================================================
+// BADGE & NOTIFICATIONS
+// ============================================================
+
+/**
+ * Met à jour le badge de l'extension avec le nombre d'items dans le pipeline.
+ * Compte: items en queue + items en erreur avec retry programmé
+ * Si pipeline vide mais update dispo, affiche "NEW"
+ */
+async function updateBadge() {
+    const result = await chrome.storage.local.get([QUEUE_KEY, STORAGE_KEY, 'ygg_update_available']);
+    const queue = result[QUEUE_KEY] || [];
+    const timers = result[STORAGE_KEY] || {};
+    const updateAvailable = result['ygg_update_available'];
+
+    let count = 0;
+
+    // Items dans la queue
+    count += queue.length;
+
+    // Items en erreur avec retry programmé (pas encore remis dans la queue)
+    for (const timer of Object.values(timers)) {
+        if (timer.status === 'error' && timer.nextRetryAt && !queue.includes(timer.id)) {
+            count++;
+        }
+    }
+
+    if (count > 0) {
+        // Priorité au compteur de pipeline
+        await chrome.action.setBadgeText({ text: String(count) });
+        await chrome.action.setBadgeBackgroundColor({ color: '#3b82f6' }); // Bleu
+    } else if (updateAvailable) {
+        // Pas de pipeline, mais update dispo
+        await chrome.action.setBadgeText({ text: 'NEW' });
+        await chrome.action.setBadgeBackgroundColor({ color: '#e74c3c' }); // Rouge
+    } else {
+        // Rien à afficher
+        await chrome.action.setBadgeText({ text: '' });
+    }
+}
+
+/**
+ * Affiche une notification quand tous les téléchargements sont terminés.
+ * @param {number} successCount - Nombre de téléchargements réussis
+ */
+async function showPipelineCompleteNotification(successCount) {
+    if (successCount === 0) return;
+
+    const options = {
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: '✅ Téléchargements terminés',
+        message: `${successCount} torrent${successCount > 1 ? 's' : ''} téléchargé${successCount > 1 ? 's' : ''} avec succès`,
+        buttons: [{ title: 'Ouvrir le dossier' }],
+        requireInteraction: false
+    };
+
+    try {
+        await chrome.notifications.create(NOTIF_PIPELINE_COMPLETE, options);
+    } catch (e) {
+        console.log('[Notifications] Erreur création notification:', e);
+    }
+}
+
+/**
+ * Affiche une notification pour une erreur terminale.
+ * @param {string} torrentId - ID du torrent en erreur
+ * @param {string} name - Nom du torrent
+ * @param {string} errorMessage - Message d'erreur
+ */
+async function showErrorNotification(torrentId, name, errorMessage) {
+    const options = {
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: '⚠️ Erreur de téléchargement',
+        message: `${name}\n${errorMessage}`,
+        buttons: [{ title: 'Réessayer' }],
+        requireInteraction: false
+    };
+
+    try {
+        await chrome.notifications.create(NOTIF_ERROR_PREFIX + torrentId, options);
+    } catch (e) {
+        console.log('[Notifications] Erreur création notification:', e);
+    }
+}
+
+/**
+ * Vérifie si une erreur est terminale (pas de retry automatique).
+ * @param {object} timer - Le timer à vérifier
+ * @returns {boolean} true si l'erreur est terminale
+ */
+function isTerminalError(timer) {
+    // Max retries dépassé
+    if (timer.retryCount > MAX_RETRIES) return true;
+    // Erreur d'authentification
+    if (timer.errorType === 'auth') return true;
+    // Torrent non trouvé
+    if (timer.errorType === 'not_found') return true;
+    return false;
+}
+
+// --- Gestionnaire de clics sur notifications ---
+chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIndex) => {
+    if (notificationId === NOTIF_PIPELINE_COMPLETE && buttonIndex === 0) {
+        // "Ouvrir le dossier" → afficher les téléchargements Chrome
+        try {
+            await chrome.downloads.showDefaultFolder();
+        } catch (e) {
+            console.log('[Notifications] Impossible d\'ouvrir le dossier:', e);
+        }
+        chrome.notifications.clear(notificationId);
+    } else if (notificationId.startsWith(NOTIF_ERROR_PREFIX) && buttonIndex === 0) {
+        // "Réessayer" → re-enqueue le torrent
+        const torrentId = notificationId.slice(NOTIF_ERROR_PREFIX.length);
+        const result = await chrome.storage.local.get([QUEUE_KEY, STORAGE_KEY]);
+        const queue = result[QUEUE_KEY] || [];
+        const timers = result[STORAGE_KEY] || {};
+
+        if (timers[torrentId]) {
+            const timer = timers[torrentId];
+            timer.status = 'queued';
+            timer.statusSince = Date.now();
+            timer.retryCount = 0;
+            timer.nextRetryAt = null;
+            timer.lastError = null;
+            timer.errorType = null;
+
+            if (!queue.includes(torrentId)) {
+                queue.unshift(torrentId); // Priorité au retry manuel
+            }
+
+            await chrome.storage.local.set({
+                [QUEUE_KEY]: queue,
+                [STORAGE_KEY]: timers
+            });
+
+            await updateBadge();
+            processQueue();
+        }
+        chrome.notifications.clear(notificationId);
+    }
+});
+
+chrome.notifications.onClicked.addListener((notificationId) => {
+    // Clic sur la notification → fermer
+    chrome.notifications.clear(notificationId);
+});
+
 // --- Initialisation ---
 chrome.runtime.onStartup.addListener(() => {
     console.log('[Pipeline] Service Worker démarré (onStartup)');
     checkForUpdates();
     registerCustomDomainScripts();
     recoverPipeline();
+    updateBadge();
 });
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -71,6 +225,7 @@ chrome.runtime.onInstalled.addListener(() => {
     checkForUpdates();
     registerCustomDomainScripts();
     recoverPipeline();
+    updateBadge();
 
     // Alarmes périodiques
     chrome.alarms.create(ALARM_UPDATE_CHECK, { periodInMinutes: 24 * 60 });
@@ -692,6 +847,12 @@ async function handleTokenError(torrentId, errorMessage, httpStatus, responseBod
         [PIPELINE_STATE_KEY]: pipelineState
     });
 
+    // Mettre à jour le badge et notifier si erreur terminale
+    await updateBadge();
+    if (isTerminalError(timer)) {
+        await showErrorNotification(torrentId, timer.name, timer.lastError);
+    }
+
     // Relancer le pipeline pour le prochain item (sauf si rate-limit)
     if (errorType !== 'rate_limit') {
         await scheduleProcessQueue(Date.now() + 1000);
@@ -860,6 +1021,14 @@ chrome.downloads.onChanged.addListener(async (delta) => {
             await cleanupHiddenTab();
         }
 
+        // Mettre à jour le badge et notifier si pipeline terminé
+        await updateBadge();
+        if (newQueue.length === 0) {
+            // Compter les téléchargements réussis de cette session
+            const successCount = Object.values(timers).filter(t => t.status === 'done').length;
+            await showPipelineCompleteNotification(successCount);
+        }
+
     } else if (delta.state.current === 'interrupted') {
         const errorReason = delta.error ? delta.error.current : '';
 
@@ -890,6 +1059,9 @@ chrome.downloads.onChanged.addListener(async (delta) => {
             if (!remainingForOrigin) {
                 await cleanupHiddenTab();
             }
+
+            // Mettre à jour le badge
+            await updateBadge();
             return;
         }
 
@@ -908,6 +1080,12 @@ chrome.downloads.onChanged.addListener(async (delta) => {
         }
 
         await chrome.storage.local.set({ [STORAGE_KEY]: timers });
+
+        // Mettre à jour le badge et notifier si erreur terminale
+        await updateBadge();
+        if (isTerminalError(timer)) {
+            await showErrorNotification(torrentId, timer.name, timer.lastError);
+        }
     }
 });
 
@@ -981,6 +1159,7 @@ async function handleEnqueue(torrentId, name, origin, sendResponse) {
                 [QUEUE_KEY]: queue,
                 [STORAGE_KEY]: timers
             });
+            await updateBadge();
             sendResponse({ status: 'queued', position: queue.indexOf(torrentId) + 1, countdownEndsAt: null });
             processQueue();
             return;
@@ -1026,6 +1205,8 @@ async function handleEnqueue(torrentId, name, origin, sendResponse) {
         [QUEUE_KEY]: queue,
         [STORAGE_KEY]: timers
     });
+
+    await updateBadge();
 
     console.log(`[Pipeline] Enqueue: ${torrentId} ("${name}") — position ${queue.length}`);
 
@@ -1136,6 +1317,8 @@ async function retryTimer(torrentId) {
         [DISMISSED_KEY]: dismissed
     });
 
+    await updateBadge();
+
     console.log(`[Pipeline] Retry manuel pour ${torrentId}`);
     processQueue();
 }
@@ -1175,6 +1358,8 @@ async function removeTimer(torrentId) {
             await cleanupHiddenTab();
         }
     }
+
+    await updateBadge();
 
     // Relancer si d'autres items attendent
     if (newQueue.length > 0) {
@@ -1287,6 +1472,7 @@ function cleanupCompletedTimers() {
             const updates = { [STORAGE_KEY]: timers, [QUEUE_KEY]: cleanQueue };
             if (dismissedChanged) updates[DISMISSED_KEY] = dismissed;
             chrome.storage.local.set(updates);
+            updateBadge();
         }
     });
 }
@@ -1308,11 +1494,11 @@ async function checkForUpdates() {
                     url: GITHUB_RELEASES_URL
                 }
             });
-            chrome.action.setBadgeText({ text: "NEW" });
-            chrome.action.setBadgeBackgroundColor({ color: "#e74c3c" });
+            // Ne pas écraser le badge du pipeline - updateBadge() gère la priorité
+            await updateBadge();
         } else {
             chrome.storage.local.remove('ygg_update_available');
-            chrome.action.setBadgeText({ text: "" });
+            await updateBadge();
         }
     } catch (e) {
         console.error("[Update] Erreur lors de la vérification:", e);
