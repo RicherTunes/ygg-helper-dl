@@ -78,8 +78,8 @@ async function updateBadge() {
     count += queue.length;
 
     // Items en erreur avec retry programmé (pas encore remis dans la queue)
-    for (const timer of Object.values(timers)) {
-        if (timer.status === 'error' && timer.nextRetryAt && !queue.includes(timer.id)) {
+    for (const [torrentId, timer] of Object.entries(timers)) {
+        if (timer.status === 'error' && timer.nextRetryAt && !queue.includes(torrentId)) {
             count++;
         }
     }
@@ -184,6 +184,10 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIn
             timer.nextRetryAt = null;
             timer.lastError = null;
             timer.errorType = null;
+            timer.token = null;
+            timer.countdownEndsAt = null;
+            timer.downloadId = null;
+            timer.requestNonce = null;
 
             if (!queue.includes(torrentId)) {
                 queue.unshift(torrentId); // Priorité au retry manuel
@@ -1024,9 +1028,16 @@ chrome.downloads.onChanged.addListener(async (delta) => {
         // Mettre à jour le badge et notifier si pipeline terminé
         await updateBadge();
         if (newQueue.length === 0) {
-            // Compter les téléchargements réussis de cette session
-            const successCount = Object.values(timers).filter(t => t.status === 'done').length;
-            await showPipelineCompleteNotification(successCount);
+            // Compter uniquement les téléchargements terminés depuis la dernière notification
+            const lastNotified = pipelineState.lastPipelineNotifiedAt || 0;
+            const successCount = Object.values(timers).filter(t =>
+                t.status === 'done' && t.completedAt && t.completedAt > lastNotified
+            ).length;
+            if (successCount > 0) {
+                pipelineState.lastPipelineNotifiedAt = now;
+                await chrome.storage.local.set({ [PIPELINE_STATE_KEY]: pipelineState });
+                await showPipelineCompleteNotification(successCount);
+            }
         }
 
     } else if (delta.state.current === 'interrupted') {

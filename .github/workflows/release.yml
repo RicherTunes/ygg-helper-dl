@@ -26,6 +26,14 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 
+      - name: Verify tag matches manifest version
+        run: |
+          VERSION=$(jq -r '.version' manifest.json)
+          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match manifest version v${VERSION}"
+            exit 1
+          fi
+
       - name: Extract changelog for this version
         id: changelog
         run: |
@@ -72,7 +80,7 @@ jobs:
           path: dist
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           tag_name: ${{ github.ref_name }}
           name: v${{ needs.build.outputs.version }}
